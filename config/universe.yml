@@ -1,0 +1,18 @@
+universe:
+  equitites:
+    - SPY
+    - QQQ
+    - EFA
+    - EEM
+
+  bonds:
+    - IEF
+    - TLT
+
+  alternatives:
+    - GLD
+    - DBC
+    - VNQ
+
+  credit:
+    - HYG
