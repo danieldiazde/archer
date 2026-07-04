@@ -1,143 +1,91 @@
 import logging
+from pathlib import Path
 
 import pandas as pd
+import yaml
+import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-EXPECTED_COLUMNS = [
-    "date",
-    "symbol",
-    "open",
-    "high",
-    "low",
-    "close",
-    "adj_close",
-    "volume",
-]
 
-PRICE_COLUMNS = ["open", "high", "low", "close", "adj_close"]
-NUMERIC_COLUMNS = PRICE_COLUMNS + ["volume"]
+def load_universe(path: str) -> list[str]:
+    """Load ticker universe from a YAML config file."""
+
+    config_path = Path(path)
+
+    logger.info("Loading universe from %s", config_path)
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Universe config not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+
+    if "universe" not in config:
+        raise ValueError("Universe config must contain a 'universe' key.")
+
+    symbols = []
+
+    for asset_class, tickers in config["universe"].items():
+        logger.debug("Loading %s tickers: %s", asset_class, tickers)
+
+        if not isinstance(tickers, list):
+            raise ValueError(f"Universe group '{asset_class}' must be a list.")
+
+        symbols.extend(tickers)
+
+    symbols = [symbol.upper() for symbol in symbols]
+
+    if len(symbols) == 0:
+        raise ValueError("Universe is empty.")
+
+    if len(symbols) != len(set(symbols)):
+        raise ValueError("Universe contains duplicate symbols.")
+
+    logger.info("Loaded %d symbols", len(symbols))
+
+    return symbols
 
 
-def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean raw OHLCV data into Archer's standard schema.
+def download_ohlcv(
+    symbols: list[str],
+    start: str,
+    end: str | None = None,
+) -> pd.DataFrame | None:
+    """Download OHLCV data from Yahoo Finance."""
 
-    Final schema:
-        date, symbol, open, high, low, close, adj_close, volume
-    """
-
-    logger.info("Cleaning OHLCV data with shape %s", df.shape)
-
-    clean = df.copy()
-
-    clean.columns = (
-        clean.columns.astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
+    logger.info(
+        "Downloading OHLCV data for %d symbols from %s to %s",
+        len(symbols),
+        start,
+        end,
     )
 
-    missing_columns = set(EXPECTED_COLUMNS) - set(clean.columns)
-    if missing_columns:
-        raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
+    data: pd.DataFrame | None = yf.download(
+        tickers=symbols,
+        start=start,
+        end=end,
+        auto_adjust=False,
+        group_by="ticker",
+        progress=False,
+    )
 
-    clean = clean[EXPECTED_COLUMNS]
+    if data is None:
+        logger.warning("Yahoo Finance returned no data for given symbols/date range")
+    else:
+        logger.info("Raw Yahoo Finance shape: %s", data.shape)
 
-    clean["date"] = pd.to_datetime(clean["date"], errors="coerce")
-    clean["symbol"] = clean["symbol"].astype(str).str.strip().str.upper()
-
-    for column in NUMERIC_COLUMNS:
-        clean[column] = pd.to_numeric(clean[column], errors="coerce")
-
-    before = len(clean)
-    clean = clean.drop_duplicates(subset=["date", "symbol"], keep="last")
-    dropped = before - len(clean)
-
-    if dropped > 0:
-        logger.warning("Dropped %d duplicate date-symbol rows", dropped)
-
-    clean = clean.sort_values(["symbol", "date"]).reset_index(drop=True)
-
-    logger.info("Finished cleaning OHLCV data with shape %s", clean.shape)
-
-    return clean
+    return data
 
 
-def validate_ohlcv(df: pd.DataFrame) -> None:
-    """
-    Validate that OHLCV data is structurally and financially sane.
+def save_raw_ohlcv(df: pd.DataFrame, path: str) -> None:
+    """Save raw OHLCV data to parquet."""
 
-    Raises:
-        ValueError: if the data violates required OHLCV rules.
-    """
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Validating OHLCV data with shape %s", df.shape)
+    logger.info("Saving raw OHLCV data to %s", output_path)
 
-    missing_columns = set(EXPECTED_COLUMNS) - set(df.columns)
-    if missing_columns:
-        raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
+    df.to_parquet(output_path, index=False)
 
-    if df["date"].isna().any():
-        raise ValueError("Found missing or invalid dates.")
-
-    if df["symbol"].isna().any():
-        raise ValueError("Found missing symbols.")
-
-    if (df["symbol"].astype(str).str.strip() == "").any():
-        raise ValueError("Found empty symbols.")
-
-    duplicate_count = df.duplicated(subset=["date", "symbol"]).sum()
-    if duplicate_count > 0:
-        raise ValueError(f"Found {duplicate_count} duplicate date-symbol rows.")
-
-    if df[PRICE_COLUMNS].isna().any().any():
-        raise ValueError("Found missing price values.")
-
-    if df["volume"].isna().any():
-        raise ValueError("Found missing volume values.")
-
-    if (df[PRICE_COLUMNS] <= 0).any().any():
-        raise ValueError("Found non-positive prices.")
-
-    if (df["volume"] < 0).any():
-        raise ValueError("Found negative volume.")
-
-    if (df["high"] < df["low"]).any():
-        raise ValueError("Found rows where high < low.")
-
-    if (df["high"] < df["open"]).any():
-        raise ValueError("Found rows where high < open.")
-
-    if (df["high"] < df["close"]).any():
-        raise ValueError("Found rows where high < close.")
-
-    if (df["low"] > df["open"]).any():
-        raise ValueError("Found rows where low > open.")
-
-    if (df["low"] > df["close"]).any():
-        raise ValueError("Found rows where low > close.")
-
-    sorted_df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
-    current_df = df.reset_index(drop=True)
-
-    if not current_df[["symbol", "date"]].equals(sorted_df[["symbol", "date"]]):
-        raise ValueError("Data must be sorted by symbol and date.")
-
-    zero_volume_count = (df["volume"] == 0).sum()
-    if zero_volume_count > 0:
-        logger.warning("Found %d rows with zero volume", zero_volume_count)
-
-    logger.info("OHLCV validation passed")
-
-
-def save_clean_ohlcv(df: pd.DataFrame, path: str) -> None:
-    """
-    Save clean OHLCV data to parquet.
-    """
-
-    logger.info("Saving clean OHLCV data to %s", path)
-
-    df.to_parquet(path, index=False)
-
-    logger.info("Saved clean OHLCV data with %d rows", len(df))
+    logger.info("Saved %d rows and %d columns", df.shape[0], df.shape[1])
