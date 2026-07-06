@@ -45,8 +45,8 @@ VALID_GROUPS = {"signals", "tradables"}
 VALID_ROLES = {
     "realized_vol_leg",
     "implied_vol_leg",
-    "long_vol",
-    "short_vol",
+    "long_vol_trade",
+    "short_vol_trade",
 }
 
 VALID_INSTRUMENT_TYPES = {"index", "etf", "etn"}

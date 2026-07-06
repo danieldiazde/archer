@@ -1,18 +1,50 @@
 universe:
-  equitites:
-    - SPY
-    - QQQ
-    - EFA
-    - EEM
+  signals:
+    - symbol: "^GSPC"
+      name: "S&P 500 Index"
+      instrument_type: "index"
+      exposure_family: "equity"
+      role: "realized_vol_leg"
+      tradable: false
+      source_priority:
+        - "yfinance"
+        - "stooq"
+      expected_start: "2010-01-01"
+      direction:
 
-  bonds:
-    - IEF
-    - TLT
+    - symbol: "^VIX"
+      name: "Cboe Volatility Index"
+      instrument_type: "index"
+      exposure_family: "volatility"
+      role: "implied_vol_leg"
+      tradable: false
+      source_priority:
+        - "cboe"
+        - "fred"
+      expected_start: "2010-01-01"
+      direction:
 
-  alternatives:
-    - GLD
-    - DBC
-    - VNQ
+  tradables:
+    - symbol: "VXX"
+      name: "iPath Series B S&P 500 VIX Short-Term Futures ETN"
+      instrument_type: "etn"
+      exposure_family: "volatility"
+      direction: "long_vol"
+      role: "long_vol_trade"
+      tradable: true
+      source_priority:
+        - "yfinance"
+      expected_start: "2010-01-01"
+      direction:
 
-  credit:
-    - HYG
+    - symbol: "SVXY"  
+      name: "ProShares Short VIX Short-Term Futures ETF"
+      instrument_type: "etf"
+      exposure_family: "volatility"
+      direction: "short_vol"
+      role: "short_vol_trade"
+      tradable: true
+      source_priority:
+        - "yfinance"
+      expected_start: "2010-01-01"
+      direction:

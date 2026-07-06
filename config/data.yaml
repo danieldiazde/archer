@@ -1,7 +1,9 @@
 data:
   start_date: "2010-01-01"
   end_date: null
-  raw_ohlcv_path: "data/raw/ohlcv.parquet"
-  processed_prices_path: "data/processed/prices.parquet"
-  simple_returns_path: "data/processed/simple_returns.parquet"
-  log_returns_path: "data/processed/log_returns.parquet"
+  calendar: "XNYS"
+  bronze_dir: "data/bronze"
+  silver_dir: "data/silver"         
+  events_whitelist: "config/events.yaml"
+  gates:
+    outlier_abs_log_return: {equity: 0.15, volatility: 0.70}
