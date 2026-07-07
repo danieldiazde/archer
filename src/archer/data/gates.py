@@ -1,9 +1,13 @@
 import pandas as pd
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Any, cast
 from universe import Instrument
 import logging
 import pandas_market_calendars as mcal
+from datetime import date, datetime
+import yaml
+from pathlib import Path
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +346,208 @@ class CoverageGate:
         )
 
 class OutliersVsWhiteListGate:
-    pass
+    name = "outliers_vs_whitelist"
+
+    def __init__(
+        self,
+        thresholds: dict[str, float],
+        events_path: str | None = None,
+    ) -> None:
+        self.thresholds = thresholds
+        self.whitelist: set[tuple[str, date]] = (
+            self._load_whitelist(events_path)
+            if events_path is not None
+            else set()
+        )
+
+    def _parse_date(self, value: Any) -> date:
+        if isinstance(value, datetime):
+            return value.date()
+
+        if isinstance(value, date):
+            return value
+
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid event date format: {value!r}. Expected YYYY-MM-DD."
+                ) from exc
+
+        raise ValueError(f"Invalid event date: {value!r}")
+
+    def _load_whitelist(self, events_path: str) -> set[tuple[str, date]]:
+        path = Path(events_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Events whitelist not found: {path}")
+
+        with path.open("r", encoding="utf-8") as file:
+            config: Any = yaml.safe_load(file)
+
+        if not isinstance(config, dict):
+            raise ValueError("events.yaml must be a YAML dictionary.")
+
+        raw_events = config.get("events", [])
+
+        if not isinstance(raw_events, list):
+            raise ValueError("'events' must be a list.")
+
+        whitelist: set[tuple[str, date]] = set()
+
+        for raw_event in raw_events:
+            if not isinstance(raw_event, dict):
+                raise ValueError("Each event must be a dictionary.")
+
+            if "date" not in raw_event:
+                raise ValueError("Each event must contain a date.")
+
+            if "symbols" not in raw_event:
+                raise ValueError("Each event must contain symbols.")
+
+            event_date = self._parse_date(raw_event["date"])
+            raw_symbols = raw_event["symbols"]
+
+            if not isinstance(raw_symbols, list):
+                raise ValueError("Event symbols must be a list.")
+
+            for raw_symbol in raw_symbols:
+                if not isinstance(raw_symbol, str):
+                    raise ValueError("Event symbols must be strings.")
+
+                symbol = raw_symbol.strip().upper()
+                if not symbol:
+                    raise ValueError("Event symbols cannot be empty.")
+
+                whitelist.add((symbol, event_date))
+
+        return whitelist
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        required_cols = ["date", "adj_close"]
+
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=f"Missing required columns: {missing_cols}",
+            )
+
+        threshold = self.thresholds.get(inst.exposure_family)
+        if threshold is None:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=(
+                    f"No outlier threshold configured for "
+                    f"exposure_family={inst.exposure_family!r}."
+                ),
+            )
+
+        if df.empty:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="No rows found for instrument.",
+            )
+
+        dates = cast(
+            pd.Series,
+            pd.to_datetime(df["date"], errors="coerce"),
+        )
+
+        bad_dates = dates.isna()
+        if bad_dates.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Some dates could not be parsed.",
+                bad_rows=df.index[bad_dates],
+            )
+
+        adj_close = cast(
+            pd.Series,
+            pd.to_numeric(df["adj_close"], errors="coerce"),
+        )
+
+        bad_adj_close = adj_close.isna() | (adj_close <= 0)
+        if bad_adj_close.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="adj_close must be numeric and positive to compute log returns.",
+                bad_rows=df.index[bad_adj_close],
+            )
+
+        work = df.copy()
+        work["_date"] = dates.dt.normalize()
+        work["_adj_close"] = adj_close.astype(float)
+        work = work.sort_values("_date")
+
+        price = cast(pd.Series, work["_adj_close"])
+        log_return = cast(
+            pd.Series,
+            np.log(price / price.shift(1)),
+        )
+
+        outlier_mask = cast(pd.Series, log_return.abs() > threshold)
+
+        if not outlier_mask.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="ok",
+                detail=f"No abs(log return) above threshold {threshold}.",
+            )
+
+        outliers = work.loc[outlier_mask].copy()
+
+        outlier_dates = cast(pd.Series, outliers["_date"]).dt.date
+
+        unwhitelisted_mask = pd.Series(
+            [
+                (inst.symbol.upper(), outlier_date) not in self.whitelist
+                for outlier_date in outlier_dates
+            ],
+            index=outliers.index,
+        )
+
+        unwhitelisted_rows = outliers.index[unwhitelisted_mask.to_numpy()]
+        whitelisted_count = len(outliers) - len(unwhitelisted_rows)
+
+        if len(unwhitelisted_rows) > 0:
+            preview_dates = outlier_dates[unwhitelisted_mask].head(5).tolist()
+            preview = [d.isoformat() for d in preview_dates]
+
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="flagged",
+                detail=(
+                    f"Found {len(unwhitelisted_rows)} unwhitelisted outlier returns "
+                    f"above threshold {threshold}. "
+                    f"Whitelisted outliers: {whitelisted_count}. "
+                    f"First unwhitelisted dates: {preview}"
+                ),
+                bad_rows=unwhitelisted_rows,
+            )
+
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status="ok",
+            detail=(
+                f"All {len(outliers)} outlier returns above threshold "
+                f"{threshold} are whitelisted."
+            ),
+        )
 
 class PlausibilityGate:
     pass
