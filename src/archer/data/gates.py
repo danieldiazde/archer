@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 from universe import Instrument
 import logging
+import pandas_market_calendars as mcal
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class UniqueKeyGate:
         if duplicated.any():
             return GateResult(
                 gate = self.name,
-                symbol=inst.symbol,
+                symbol= inst.symbol,
                 status = "failed",
                 detail = "Duplicate dates found.",
                 bad_rows = df.index[duplicated]
@@ -40,25 +41,305 @@ class UniqueKeyGate:
         )
 
 class OhlcCoherentGate:
-    pass
+    name = "ohlc_coherent"
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        required_cols = ["open", "high", "low", "close"]
+
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=f"Missing OHLC columns: {missing_cols}",
+            )
+
+        high_bad = (
+            (df["high"] < df["open"])
+            | (df["high"] < df["low"])
+            | (df["high"] < df["close"])
+        )
+
+        low_bad = (
+            (df["low"] > df["open"])
+            | (df["low"] > df["high"])
+            | (df["low"] > df["close"])
+        )
+
+        bad_rows = high_bad | low_bad
+
+        if bad_rows.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="OHLC values are incoherent: high must be >= open/low/close and low must be <= open/high/close.",
+                bad_rows=df.index[bad_rows],
+            )
+
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status="ok",
+        )
 
 class PositivePricesGate:
     name = "positive_prices"
 
     def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
-        negatives = df[]
+        negatives = df.columns[(df <= 0).any()]
+
+        if negatives:
+            return GateResult(
+                gate = self.name,
+                symbol=inst.symbol,
+                status = 'failed',
+                detail='Negative values found.',
+                bad_rows= df.index[negatives]
+            )
+        return GateResult(
+            gate=self.name,
+            symbol= inst.symbol,
+            status='ok'
+        )
 
 class SortedKeyGate:
-    pass
+    name = 'sorted_key'
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        unsorted = not df['date'].is_monotonic_increasing
+
+        if unsorted:
+            bad_mask = df['date'] < df['date'].shift(1)
+
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status='failed',
+                detail='Dates must be sorted in increasing order.',
+                bad_rows=df.index[bad_mask]
+            )
+        
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status='ok'
+        )
 
 class VolumeNonnegGate:
-    pass
+    name = 'nonneg_volume'
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        negative_volume = df['volume'] < 0
+
+        if negative_volume.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status='failed',
+                detail='Volume must be greater or equal to zero.',
+                bad_rows=df.index[negative_volume]
+            )
+        
+        return GateResult(
+            gate=self.name,
+            symbol = inst.symbol,
+            status='ok'
+        )
 
 class CalendarCompleteGate:
-    pass
+    name = 'calendar_complete'
+
+    def __init__(self, calendar_name : str = 'XNYS') -> None:
+        self.calendar_name = calendar_name
+        self.calendar = mcal.get_calendar(calendar_name)
+
+    def check(self, inst:Instrument, df: pd.DataFrame) -> GateResult:
+        if "date" not in df.columns:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Missing required column: date.",
+            )
+        if df.empty:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="No rows found for instrument.",
+            )
+        
+        dates = pd.to_datetime(df["date"], errors="coerce")
+
+        bad_dates = dates.isna()
+        if bad_dates.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Some dates could not be parsed.",
+                bad_rows=df.index[bad_dates],
+            )
+        
+        observed_dates = pd.DatetimeIndex(
+            dates.dt.normalize().unique()
+        ).sort_values()
+
+        if len(observed_dates) <= 1:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="ok",
+                detail="One or zero observed dates; no internal calendar gaps to check.",
+            )
+
+        start_date = observed_dates.min().date()
+        end_date = observed_dates.max().date()
+
+        schedule = self.calendar.schedule(
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        expected_dates = pd.DatetimeIndex(schedule.index).normalize()
+
+        missing_dates = expected_dates.difference(observed_dates)
+
+        if len(missing_dates) > 0:
+            preview = [d.date().isoformat() for d in missing_dates[:5]]
+
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=(
+                    f"Missing {len(missing_dates)} expected {self.calendar_name} "
+                    f"sessions between {start_date} and {end_date}. "
+                    f"First missing dates: {preview}"
+                ),
+                bad_rows=missing_dates,
+            )
+
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status="ok",
+            detail=f"All expected {self.calendar_name} sessions are present.",
+        )
 
 class CoverageGate:
-    pass
+    name = "coverage"
+
+    def __init__(self, calendar_name: str = "XNYS") -> None:
+        self.calendar_name = calendar_name
+        self.calendar = mcal.get_calendar(calendar_name)
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        if "date" not in df.columns:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Missing required column: date.",
+            )
+
+        if df.empty:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=(
+                    f"No rows found. Expected coverage starting from "
+                    f"{inst.expected_start.isoformat()}."
+                ),
+            )
+
+        dates = pd.to_datetime(df["date"], errors="coerce")
+
+        bad_dates = dates.isna()
+        if bad_dates.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Some dates could not be parsed.",
+                bad_rows=df.index[bad_dates],
+            )
+
+        observed_dates = pd.DatetimeIndex(
+            dates.dt.normalize().unique()
+        ).sort_values()
+
+        first_observed = observed_dates.min().date()
+        last_observed = observed_dates.max().date()
+
+        schedule = self.calendar.schedule(
+            start_date=inst.expected_start,
+            end_date=last_observed,
+        )
+
+        expected_sessions = pd.DatetimeIndex(schedule.index).normalize()
+
+        if len(expected_sessions) == 0:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="flagged",
+                detail=(
+                    f"No expected {self.calendar_name} sessions found between "
+                    f"{inst.expected_start.isoformat()} and {last_observed.isoformat()}."
+                ),
+            )
+
+        expected_first = expected_sessions.min().date()
+
+        if first_observed > expected_first:
+            missing_before_start = expected_sessions[
+                expected_sessions.date < first_observed
+            ]
+
+            preview = [
+                d.date().isoformat()
+                for d in missing_before_start[:5]
+            ]
+
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=(
+                    f"Coverage starts late. Expected first session on "
+                    f"{expected_first.isoformat()}, but first observed date is "
+                    f"{first_observed.isoformat()}. "
+                    f"Missing {len(missing_before_start)} expected sessions before "
+                    f"first observation. First missing dates: {preview}"
+                ),
+                bad_rows=missing_before_start,
+            )
+
+        if first_observed < expected_first:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="flagged",
+                detail=(
+                    f"Coverage starts earlier than configured. Expected first session "
+                    f"on {expected_first.isoformat()}, but first observed date is "
+                    f"{first_observed.isoformat()}. Check expected_start in universe.yaml."
+                ),
+            )
+
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status="ok",
+            detail=(
+                f"Coverage starts on expected first session: "
+                f"{expected_first.isoformat()}."
+            ),
+        )
 
 class OutliersVsWhiteListGate:
     pass
