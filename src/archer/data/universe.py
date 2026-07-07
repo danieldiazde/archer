@@ -233,4 +233,3 @@ def load_universe(path: str) -> list[Instrument]:
             instruments.append(instrument)
 
     return instruments
-

@@ -1,143 +1,96 @@
 import logging
+from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
 import pandas as pd
+
+from universe import Instrument
 
 logger = logging.getLogger(__name__)
 
-EXPECTED_COLUMNS = [
-    "date",
-    "symbol",
-    "open",
-    "high",
-    "low",
-    "close",
-    "adj_close",
-    "volume",
-]
 
-PRICE_COLUMNS = ["open", "high", "low", "close", "adj_close"]
-NUMERIC_COLUMNS = PRICE_COLUMNS + ["volume"]
+@dataclass(frozen=True, slots=True)
+class CoercionIssue:
+    symbol: str
+    column: str
+    row_index: object
+    raw_value: object
+    message: str
 
 
-def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean raw OHLCV data into Archer's standard schema.
+@dataclass(frozen=True, slots=True)
+class CleanResult:
+    df: pd.DataFrame
+    issues: list[CoercionIssue]
 
-    Final schema:
-        date, symbol, open, high, low, close, adj_close, volume
-    """
 
-    logger.info("Cleaning OHLCV data with shape %s", df.shape)
+def clean_ohlcv(raw: pd.DataFrame, inst: Instrument) -> CleanResult:
+    df = raw.copy()
+    issues: list[CoercionIssue] = []
 
-    clean = df.copy()
-
-    clean.columns = (
-        clean.columns.astype(str)
-        .str.strip()
+    df.columns = (
+        df.columns
         .str.lower()
+        .str.strip()
         .str.replace(" ", "_")
+        .str.replace("-", "_")
     )
 
-    missing_columns = set(EXPECTED_COLUMNS) - set(clean.columns)
-    if missing_columns:
-        raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
+    required_cols = {"date", "open", "high", "low", "close"}
+    missing_cols = required_cols - set(df.columns)
 
-    clean = clean[EXPECTED_COLUMNS]
+    if missing_cols:
+        raise ValueError(f"Missing required OHLCV columns: {sorted(missing_cols)}")
 
-    clean["date"] = pd.to_datetime(clean["date"], errors="coerce")
-    clean["symbol"] = clean["symbol"].astype(str).str.strip().str.upper()
+    df["symbol"] = inst.symbol
 
-    for column in NUMERIC_COLUMNS:
-        clean[column] = pd.to_numeric(clean[column], errors="coerce")
+    if "adj_close" not in df.columns:
+        df["adj_close"] = df["close"]
 
-    before = len(clean)
-    clean = clean.drop_duplicates(subset=["date", "symbol"], keep="last")
-    dropped = before - len(clean)
+    if "volume" not in df.columns:
+        df["volume"] = np.nan
 
-    if dropped > 0:
-        logger.warning("Dropped %d duplicate date-symbol rows", dropped)
+    raw_date = df["date"].copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    clean = clean.sort_values(["symbol", "date"]).reset_index(drop=True)
+    bad_dates = raw_date.notna() & df["date"].isna()
 
-    logger.info("Finished cleaning OHLCV data with shape %s", clean.shape)
+    for idx in df.index[bad_dates]:
+        issues.append(
+            CoercionIssue(
+                symbol=inst.symbol,
+                column="date",
+                row_index=idx,
+                raw_value=raw_date.loc[idx],
+                message="Could not parse date.",
+            )
+        )
 
-    return clean
+    numeric_cols = ["open", "high", "low", "close", "adj_close", "volume"]
 
+    for col in numeric_cols:
+        raw_values = df[col].copy()
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-def validate_ohlcv(df: pd.DataFrame) -> None:
-    """
-    Validate that OHLCV data is structurally and financially sane.
+        bad_values = raw_values.notna() & df[col].isna()
 
-    Raises:
-        ValueError: if the data violates required OHLCV rules.
-    """
+        for idx in df.index[bad_values]:
+            issues.append(
+                CoercionIssue(
+                    symbol=inst.symbol,
+                    column=col,
+                    row_index=idx,
+                    raw_value=raw_values.loc[idx],
+                    message=f"Could not parse numeric value in {col}.",
+                )
+            )
 
-    logger.info("Validating OHLCV data with shape %s", df.shape)
+    df = df[
+        ["symbol", "date", "open", "high", "low", "close", "adj_close", "volume"]
+    ]
 
-    missing_columns = set(EXPECTED_COLUMNS) - set(df.columns)
-    if missing_columns:
-        raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
+    df = df.drop_duplicates()
+    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-    if df["date"].isna().any():
-        raise ValueError("Found missing or invalid dates.")
-
-    if df["symbol"].isna().any():
-        raise ValueError("Found missing symbols.")
-
-    if (df["symbol"].astype(str).str.strip() == "").any():
-        raise ValueError("Found empty symbols.")
-
-    duplicate_count = df.duplicated(subset=["date", "symbol"]).sum()
-    if duplicate_count > 0:
-        raise ValueError(f"Found {duplicate_count} duplicate date-symbol rows.")
-
-    if df[PRICE_COLUMNS].isna().any().any():
-        raise ValueError("Found missing price values.")
-
-    if df["volume"].isna().any():
-        raise ValueError("Found missing volume values.")
-
-    if (df[PRICE_COLUMNS] <= 0).any().any():
-        raise ValueError("Found non-positive prices.")
-
-    if (df["volume"] < 0).any():
-        raise ValueError("Found negative volume.")
-
-    if (df["high"] < df["low"]).any():
-        raise ValueError("Found rows where high < low.")
-
-    if (df["high"] < df["open"]).any():
-        raise ValueError("Found rows where high < open.")
-
-    if (df["high"] < df["close"]).any():
-        raise ValueError("Found rows where high < close.")
-
-    if (df["low"] > df["open"]).any():
-        raise ValueError("Found rows where low > open.")
-
-    if (df["low"] > df["close"]).any():
-        raise ValueError("Found rows where low > close.")
-
-    sorted_df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
-    current_df = df.reset_index(drop=True)
-
-    if not current_df[["symbol", "date"]].equals(sorted_df[["symbol", "date"]]):
-        raise ValueError("Data must be sorted by symbol and date.")
-
-    zero_volume_count = (df["volume"] == 0).sum()
-    if zero_volume_count > 0:
-        logger.warning("Found %d rows with zero volume", zero_volume_count)
-
-    logger.info("OHLCV validation passed")
-
-
-def save_clean_ohlcv(df: pd.DataFrame, path: str) -> None:
-    """
-    Save clean OHLCV data to parquet.
-    """
-
-    logger.info("Saving clean OHLCV data to %s", path)
-
-    df.to_parquet(path, index=False)
-
-    logger.info("Saved clean OHLCV data with %d rows", len(df))
+    return CleanResult(df=df, issues=issues)

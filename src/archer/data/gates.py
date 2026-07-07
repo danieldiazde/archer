@@ -550,7 +550,106 @@ class OutliersVsWhiteListGate:
         )
 
 class PlausibilityGate:
-    pass
+    name = "plausibility"
+
+    def __init__(
+        self,
+        bounds_by_symbol: dict[str, tuple[float, float]] | None = None,
+        price_cols: tuple[str, ...] = ("open", "high", "low", "close", "adj_close"),
+    ) -> None:
+        self.bounds_by_symbol = bounds_by_symbol or {
+            "^VIX": (5.0, 150.0),
+        }
+        self.price_cols = price_cols
+
+    def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
+        symbol = inst.symbol.upper()
+
+        if symbol not in self.bounds_by_symbol:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="ok",
+                detail="No plausibility bounds configured for this symbol.",
+            )
+
+        if df.empty:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="No rows found for instrument.",
+            )
+
+        lower, upper = self.bounds_by_symbol[symbol]
+
+        available_cols = [col for col in self.price_cols if col in df.columns]
+
+        if not available_cols:
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail=(
+                    f"No price columns available for plausibility check. "
+                    f"Expected at least one of {list(self.price_cols)}."
+                ),
+            )
+
+        bad_masks: list[pd.Series] = []
+
+        for col in available_cols:
+            values = cast(
+                pd.Series,
+                pd.to_numeric(df[col], errors="coerce"),
+            )
+
+            non_numeric = values.isna() & df[col].notna()
+            if non_numeric.any():
+                return GateResult(
+                    gate=self.name,
+                    symbol=inst.symbol,
+                    status="failed",
+                    detail=f"Column {col!r} contains non-numeric values.",
+                    bad_rows=df.index[non_numeric],
+                )
+
+            outside_bounds = (values < lower) | (values > upper)
+            bad_masks.append(outside_bounds)
+
+        bad_rows_mask = bad_masks[0]
+        for mask in bad_masks[1:]:
+            bad_rows_mask = bad_rows_mask | mask
+
+        if bad_rows_mask.any():
+            bad_rows = df.index[bad_rows_mask]
+
+            preview_cols = ["date", *available_cols]
+            preview_cols = [col for col in preview_cols if col in df.columns]
+
+            preview = (
+                df.loc[bad_rows, preview_cols]
+                .head(5)
+                .to_dict(orient="records")
+            )
+
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="flagged",
+                detail=(
+                    f"Values outside plausible range [{lower}, {upper}] "
+                    f"for {symbol}. First examples: {preview}"
+                ),
+                bad_rows=bad_rows,
+            )
+
+        return GateResult(
+            gate=self.name,
+            symbol=inst.symbol,
+            status="ok",
+            detail=f"All checked values are within plausible range [{lower}, {upper}].",
+        )
 
 def run_gates(df : pd.DataFrame, instruments : list[Instrument], gates : list[Gate]) -> list[GateResult]:
 
