@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Protocol
 from universe import Instrument
 from datetime import date
@@ -6,6 +8,9 @@ import pandas as pd
 import yfinance as yf
 import requests
 from io import StringIO
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SourceError(RuntimeError):
     """A data source cannot fetch usable data."""

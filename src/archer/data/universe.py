@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, fields, MISSING
 from datetime import date, datetime
 from pathlib import Path
@@ -6,7 +8,6 @@ import logging
 import yaml
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class Instrument:

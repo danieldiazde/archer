@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -7,6 +9,10 @@ from pathlib import Path
 from typing import Literal, Any
 import pandas as pd
 from universe import Instrument
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class StoreError(Exception):
     """Base error for storage-layer failures."""
