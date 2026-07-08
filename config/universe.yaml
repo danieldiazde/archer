@@ -29,22 +29,20 @@ universe:
       name: "iPath Series B S&P 500 VIX Short-Term Futures ETN"
       instrument_type: "etn"
       exposure_family: "volatility"
-      direction: "long_vol"
       role: "long_vol_trade"
       tradable: true
       source_priority:
         - "yfinance"
       expected_start: "2010-01-01"
-      direction:
+      direction: "long_vol"
 
     - symbol: "SVXY"  
       name: "ProShares Short VIX Short-Term Futures ETF"
       instrument_type: "etf"
       exposure_family: "volatility"
-      direction: "short_vol"
       role: "short_vol_trade"
       tradable: true
       source_priority:
         - "yfinance"
       expected_start: "2010-01-01"
-      direction:
+      direction: "short_vol"

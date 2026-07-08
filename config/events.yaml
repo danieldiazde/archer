@@ -1,0 +1,3 @@
+events:
+  - {date: "2018-02-05", symbols: ["^VIX", "SVXY", "VXX"], reason: "Volmageddon; XIV termination"}
+  - {date: "2020-03-16", symbols: ["^GSPC", "^VIX"], reason: "COVID crash"}

@@ -76,7 +76,6 @@ class YFinanceSource:
 class CboeVixSource:
     name = "cboe"
 
-    # CBOE has changed URLs before; keep this isolated here.
     vix_csv_url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 
     def fetch(
