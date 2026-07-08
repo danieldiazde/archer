@@ -10,8 +10,8 @@ from typing import Any, Literal
 import pandas as pd
 import yaml
 
-from cleaner import clean_ohlcv
-from gates import (
+from .cleaner import clean_ohlcv
+from .gates import (
     CalendarCompleteGate,
     CoverageGate,
     Gate,
@@ -25,9 +25,9 @@ from gates import (
     VolumeNonnegGate,
     run_gates,
 )
-from sources import SourceError, SourceResolver, build_default_resolver
-from store import ParquetStore, assert_unique_slugs, infer_date_range
-from universe import Instrument, load_universe
+from .sources import SourceError, SourceResolver, build_default_resolver
+from .store import ParquetStore, assert_unique_slugs, infer_date_range
+from .universe import Instrument, load_universe
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,15 @@ def load_ingest_config(path: str | Path) -> IngestConfig:
     events_raw = data.get("events_whitelist")
     events_whitelist = Path(events_raw) if isinstance(events_raw, str) and events_raw.strip() else None
 
+    universe_raw = data.get("universe")
+
+    if isinstance(universe_raw, str) and universe_raw.strip():
+        universe_path = Path(universe_raw.strip())
+    else:
+        universe_path = Path("config/universe.yaml")
+
     return IngestConfig(
-        universe_path=Path(_require_str(data, "universe")),
+        universe_path=universe_path,
         bronze_dir=Path(_require_str(data, "bronze_dir")),
         silver_dir=Path(_require_str(data, "silver_dir")),
         start_date=_parse_required_date(data.get("start_date"), "start_date"),
@@ -121,7 +128,6 @@ def load_ingest_config(path: str | Path) -> IngestConfig:
         events_whitelist=events_whitelist,
         outlier_abs_log_return=thresholds,
     )
-
 
 def build_default_gates(cfg: IngestConfig) -> list[Gate]:
     """
@@ -317,26 +323,26 @@ def run_ingest(
     return reports
 
 
-def run_ingest_from_config(
-    config_path: str | Path,
+def run_from_config(
+    data_config_path: str | Path,
+    universe_config_path: str | Path | None = None,
     *,
     symbols: list[str] | None = None,
     from_bronze: bool = False,
 ) -> list[SymbolReport]:
-    """
-    Composition root for the data ingest pipeline.
+    cfg = load_ingest_config(data_config_path)
 
-    This is the one place where real objects are constructed:
-        config
-        universe
-        store
-        source resolver
-        gates
-
-    CLI should call this function.
-    Tests can bypass it and inject fake stores/sources/gates into run_ingest().
-    """
-    cfg = load_ingest_config(config_path)
+    if universe_config_path is not None:
+        cfg = IngestConfig(
+            universe_path=Path(universe_config_path),
+            bronze_dir=cfg.bronze_dir,
+            silver_dir=cfg.silver_dir,
+            start_date=cfg.start_date,
+            end_date=cfg.end_date,
+            calendar=cfg.calendar,
+            events_whitelist=cfg.events_whitelist,
+            outlier_abs_log_return=cfg.outlier_abs_log_return,
+        )
 
     universe = load_universe(str(cfg.universe_path))
     assert_unique_slugs(universe)

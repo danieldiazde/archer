@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 from dataclasses import dataclass
 from typing import Literal, Protocol, Any, cast
-from universe import Instrument
+from .universe import Instrument
 import logging
 import pandas_market_calendars as mcal
 from datetime import date, datetime
@@ -94,20 +94,52 @@ class PositivePricesGate:
     name = "positive_prices"
 
     def check(self, inst: Instrument, df: pd.DataFrame) -> GateResult:
-        negatives = df.columns[(df <= 0).any()]
+        price_cols = ["open", "high", "low", "close", "adj_close"]
 
-        if negatives:
+        missing_cols = [col for col in price_cols if col not in df.columns]
+        if missing_cols:
             return GateResult(
-                gate = self.name,
+                gate=self.name,
                 symbol=inst.symbol,
-                status = 'failed',
-                detail='Negative values found.',
-                bad_rows= df.index[negatives]
+                status="failed",
+                detail=f"Missing price columns: {missing_cols}",
             )
+
+        bad_masks: list[pd.Series] = []
+
+        for col in price_cols:
+            values = pd.to_numeric(df[col], errors="coerce")
+
+            non_numeric = df[col].notna() & values.isna()
+            if non_numeric.any():
+                return GateResult(
+                    gate=self.name,
+                    symbol=inst.symbol,
+                    status="failed",
+                    detail=f"Column {col!r} contains non-numeric price values.",
+                    bad_rows=df.index[non_numeric],
+                )
+
+            non_positive = values <= 0
+            bad_masks.append(non_positive)
+
+        bad_rows = bad_masks[0]
+        for mask in bad_masks[1:]:
+            bad_rows = bad_rows | mask
+
+        if bad_rows.any():
+            return GateResult(
+                gate=self.name,
+                symbol=inst.symbol,
+                status="failed",
+                detail="Price columns must be strictly positive.",
+                bad_rows=df.index[bad_rows],
+            )
+
         return GateResult(
             gate=self.name,
-            symbol= inst.symbol,
-            status='ok'
+            symbol=inst.symbol,
+            status="ok",
         )
 
 class SortedKeyGate:
@@ -655,7 +687,7 @@ class PlausibilityGate:
 
 def run_gates(df : pd.DataFrame, instruments : list[Instrument], gates : list[Gate]) -> list[GateResult]:
 
-    logger.info("Running gates on data with dape %s", df.shape)
+    logger.info("Running gates on data with shape %s", df.shape)
 
     results : list[GateResult] = []
 

@@ -33,7 +33,7 @@ universe:
       tradable: true
       source_priority:
         - "yfinance"
-      expected_start: "2010-01-01"
+      expected_start: "2018-01-25"
       direction: "long_vol"
 
     - symbol: "SVXY"  
@@ -44,5 +44,5 @@ universe:
       tradable: true
       source_priority:
         - "yfinance"
-      expected_start: "2010-01-01"
+      expected_start: "2011-10-04"
       direction: "short_vol"

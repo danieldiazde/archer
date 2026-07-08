@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Any
 import pandas as pd
-from universe import Instrument
+from .universe import Instrument
 import logging
 
 logger = logging.getLogger(__name__)

@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-07-08T04:28:00.611269+00:00",
+  "gates": "",
+  "inputs": [],
+  "layer": "bronze",
+  "requested_end": null,
+  "requested_start": "2010-01-01",
+  "retrieved_end": "2026-07-07",
+  "retrieved_start": "2018-01-25",
+  "rows": 2122,
+  "schema_version": 1,
+  "sha256": "40138ccc44f84b7761182eb98969591b40341dedc37dc312fc8ed21778247e7e",
+  "source": "yfinance",
+  "symbol": "VXX"
+}

@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from universe import Instrument
+from .universe import Instrument
 
 logger = logging.getLogger(__name__)
 
