@@ -398,4 +398,3 @@ def build_manifest(
         inputs=inputs,
         gates=gates,
     )
-

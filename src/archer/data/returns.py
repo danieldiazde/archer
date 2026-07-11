@@ -86,4 +86,3 @@ def make_simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
     _validate_price_matrix(prices)
     simple_returns = prices / prices.shift(1) - 1
     return simple_returns.dropna(how="all")
-

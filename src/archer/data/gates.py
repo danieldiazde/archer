@@ -563,7 +563,7 @@ class OutliersVsWhiteListGate:
             return GateResult(
                 gate=self.name,
                 symbol=inst.symbol,
-                status="flagged",
+                status="failed",
                 detail=(
                     f"Found {len(unwhitelisted_rows)} unwhitelisted outlier returns "
                     f"above threshold {threshold}. "
@@ -576,11 +576,12 @@ class OutliersVsWhiteListGate:
         return GateResult(
             gate=self.name,
             symbol=inst.symbol,
-            status="ok",
+            status="flagged",
             detail=(
                 f"All {len(outliers)} outlier returns above threshold "
                 f"{threshold} are whitelisted."
             ),
+            bad_rows=outliers.index,
         )
 
 class PlausibilityGate:
@@ -700,4 +701,3 @@ def run_gates(df : pd.DataFrame, instruments : list[Instrument], gates : list[Ga
             results.append(result)
     
     return results
-   
