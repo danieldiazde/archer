@@ -89,6 +89,7 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
 
     adjusted = _adjust_ohlc(df)
 
+    open_ = adjusted['open'].astype(float)
     high = adjusted['high'].astype(float)
     low = adjusted['low'].astype(float)
     close = adjusted["close"].astype(float)
@@ -100,6 +101,12 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
     elif method == 'parkinson':
         log_range = np.log(high / low)
         variance = log_range ** 2 / (4.0 * np.log(2.0))
+    
+    elif method == 'gk':
+        log_hl = np.log(high / low)
+        log_co = np.log(close / open_)
+        variance = 0.5 * log_hl ** 2 - (2.0 * np.log(2.0) - 1.0) * log_co ** 2
+
 
     variance.index = pd.DatetimeIndex(adjusted["date"])
     variance.name = method
@@ -140,5 +147,5 @@ def realized_vol(
     vol = np.sqrt(annualized_variance)
     vol.name = f'rv_{method}_{window}'
 
-
     return vol
+
