@@ -83,9 +83,11 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
     Compute a per-day variance proxy based on different estimators.
     Returns daily variance, not annualized volatility
     """
+    if method == "yz":
+        raise ValueError("Yang-Zhang is window-level only. Use realized_vol(..., method='yz').")
 
-    if method not in VALID_ESTIMATORS:
-        raise ValueError(f'Invalid estimator: {method}. Must be one of {VALID_ESTIMATORS}.')
+    if method not in {"cc", "parkinson", "gk", "rs"}:
+        raise NotImplementedError(f"Estimator {method!r} is not implemented yet.")
 
     adjusted = _adjust_ohlc(df)
 
@@ -106,6 +108,12 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
         log_hl = np.log(high / low)
         log_co = np.log(close / open_)
         variance = 0.5 * log_hl ** 2 - (2.0 * np.log(2.0) - 1.0) * log_co ** 2
+    
+    else:
+        variance = (
+            np.log(high / close) * np.log(high / open_)
+            + np.log(low / close) * np.log(low / open_)
+        )
 
 
     variance.index = pd.DatetimeIndex(adjusted["date"])
@@ -113,39 +121,88 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
 
     return variance
 
+
+def _yang_zhang_variance(df: pd.DataFrame, *, window: int) -> pd.Series:
+    """
+    Compute rolling Yang-Zhang daily variance.
+
+    This is not annualized and not square-rooted yet.
+    """
+    adjusted = _adjust_ohlc(df)
+
+    open_ = adjusted["open"].astype(float)
+    high = adjusted["high"].astype(float)
+    low = adjusted["low"].astype(float)
+    close = adjusted["close"].astype(float)
+
+    overnight = np.log(open_ / close.shift(1))
+    open_close = np.log(close / open_)
+
+    rs = (
+        np.log(high / close) * np.log(high / open_)
+        + np.log(low / close) * np.log(low / open_)
+    )
+
+    k = 0.34 / (1.34 + (window + 1.0) / (window - 1.0))
+
+    overnight_var = overnight.rolling(
+        window=window,
+        min_periods=window,
+    ).var(ddof=1)
+
+    open_close_var = open_close.rolling(
+        window=window,
+        min_periods=window,
+    ).var(ddof=1)
+
+    rs_mean = rs.rolling(
+        window=window,
+        min_periods=window,
+    ).mean()
+
+    yz_variance = overnight_var + k * open_close_var + (1.0 - k) * rs_mean
+
+    yz_variance.index = pd.DatetimeIndex(adjusted["date"])
+    yz_variance.name = f"yz_var_{window}"
+
+    return yz_variance
+
 def realized_vol(
     df: pd.DataFrame,
     *,
-    method: Estimator = 'cc',
-    window : int = 21,
-    trading_days : int = 252
+    method: Estimator = "yz",
+    window: int = 21,
+    trading_days: int = 252,
 ) -> pd.Series:
-    '''
+    """
     Compute annualized realized volatility in decimal units.
 
     Example:
         0.20 means 20% annualized volatility.
-    '''
-    if method not in VALID_ESTIMATORS:
-        raise ValueError(f'Invalid estimator: {method}. Must be one of {VALID_ESTIMATORS}.')
-
+    """
     if window < 2:
-        raise ValueError('Window must include at least 2.')
-    
+        raise ValueError("window must be at least 2.")
+
     if trading_days <= 0:
-        raise ValueError('Trading days must be positive.')
+        raise ValueError("trading_days must be positive.")
 
-    variance = daily_variance(df, method = method)
+    if method == "yz":
+        variance = _yang_zhang_variance(df, window=window)
 
-    rolling_variance = variance.rolling(
-        window = window,
-        min_periods = window,
-    ).mean()
+    elif method in {"cc", "parkinson", "gk", "rs"}:
+        daily_var = daily_variance(df, method=method)
+        variance = daily_var.rolling(
+            window=window,
+            min_periods=window,
+        ).mean()
 
-    annualized_variance = rolling_variance * float(trading_days)
+    else:
+        raise NotImplementedError(f"Estimator {method!r} is not implemented yet.")
+
+    annualized_variance = variance * float(trading_days)
 
     vol = np.sqrt(annualized_variance)
-    vol.name = f'rv_{method}_{window}'
+    vol.name = f"rv_{method}_{window}"
 
     return vol
 

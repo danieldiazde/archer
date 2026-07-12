@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from archer.features.realized_vol import _adjust_ohlc, daily_variance, realized_vol
-
+import pytest
 
 def test_adjusted_bars_removes_split_jump() -> None:
     df = pd.DataFrame(
@@ -163,3 +163,116 @@ def test_realized_vol_gk_averages_variance_then_sqrt() -> None:
 
     assert np.isnan(out.iloc[0])
     assert np.isclose(out.iloc[1], expected)
+
+def test_daily_variance_rogers_satchell_uses_full_ohlc_bar() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03"]),
+            "open": [100.0, 102.0],
+            "high": [105.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [102.0, 104.0],
+            "adj_close": [102.0, 104.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    out = daily_variance(df, method="rs")
+
+    expected_0 = (
+        np.log(105.0 / 102.0) * np.log(105.0 / 100.0)
+        + np.log(99.0 / 102.0) * np.log(99.0 / 100.0)
+    )
+
+    expected_1 = (
+        np.log(106.0 / 104.0) * np.log(106.0 / 102.0)
+        + np.log(101.0 / 104.0) * np.log(101.0 / 102.0)
+    )
+
+    assert np.isclose(out.iloc[0], expected_0)
+    assert np.isclose(out.iloc[1], expected_1)
+
+def test_realized_vol_rs_averages_variance_then_sqrt() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]),
+            "open": [100.0, 102.0, 104.0],
+            "high": [105.0, 106.0, 108.0],
+            "low": [99.0, 101.0, 103.0],
+            "close": [102.0, 104.0, 107.0],
+            "adj_close": [102.0, 104.0, 107.0],
+            "volume": [1000, 1000, 1000],
+        }
+    )
+
+    out = realized_vol(df, method="rs", window=2, trading_days=252)
+
+    daily = daily_variance(df, method="rs")
+    expected = np.sqrt(daily.iloc[0:2].mean() * 252.0)
+
+    assert np.isnan(out.iloc[0])
+    assert np.isclose(out.iloc[1], expected)
+
+def test_daily_variance_rejects_yang_zhang_because_it_is_window_level() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03"]),
+            "open": [100.0, 102.0],
+            "high": [105.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [102.0, 104.0],
+            "adj_close": [102.0, 104.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    with pytest.raises(ValueError, match="window-level"):
+        daily_variance(df, method="yz")
+
+def test_realized_vol_yang_zhang_combines_overnight_open_close_and_rs() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+            ),
+            "open": [100.0, 104.0, 103.0, 108.0],
+            "high": [103.0, 106.0, 107.0, 111.0],
+            "low": [99.0, 102.0, 101.0, 105.0],
+            "close": [102.0, 103.0, 106.0, 109.0],
+            "adj_close": [102.0, 103.0, 106.0, 109.0],
+            "volume": [1000, 1000, 1000, 1000],
+        }
+    )
+
+    out = realized_vol(df, method="yz", window=3, trading_days=252)
+
+    open_ = df["open"].astype(float)
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+
+    overnight = np.log(open_ / close.shift(1))
+    open_close = np.log(close / open_)
+
+    rs = (
+        np.log(high / close) * np.log(high / open_)
+        + np.log(low / close) * np.log(low / open_)
+    )
+
+    window = 3
+    k = 0.34 / (1.34 + (window + 1.0) / (window - 1.0))
+
+    # First valid YZ window is rows 1, 2, 3.
+    # Row 0 has no previous close, so overnight is NaN there.
+    expected_variance = (
+        overnight.iloc[1:4].var(ddof=1)
+        + k * open_close.iloc[1:4].var(ddof=1)
+        + (1.0 - k) * rs.iloc[1:4].mean()
+    )
+
+    expected_vol = np.sqrt(expected_variance * 252.0)
+
+    assert np.isnan(out.iloc[0])
+    assert np.isnan(out.iloc[1])
+    assert np.isnan(out.iloc[2])
+    assert np.isclose(out.iloc[3], expected_vol)
