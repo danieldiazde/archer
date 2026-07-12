@@ -74,3 +74,45 @@ def test_realized_vol_cc_averages_variance_then_sqrt() -> None:
     assert np.isnan(out.iloc[0])
     assert np.isnan(out.iloc[1])
     assert np.isclose(out.iloc[2], expected_first_valid)
+
+def test_daily_variance_parkinson_uses_high_low_range() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03"]),
+            "open": [100.0, 102.0],
+            "high": [105.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [102.0, 104.0],
+            "adj_close": [102.0, 104.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    out = daily_variance(df, method = 'parkinson')
+
+    expected_0 = np.log(105.0 / 99.0) ** 2 / (4.0 * np.log(2.0))
+    expected_1 = np.log(106.0 / 101.0) ** 2 / (4.0 * np.log(2.0))
+
+    assert np.isclose(out.iloc[0], expected_0)
+    assert np.isclose(out.iloc[1], expected_1)
+
+def test_realized_vol_parkinson_averages_variance_then_sqrt() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]),
+            "open": [100.0, 102.0, 104.0],
+            "high": [105.0, 106.0, 108.0],
+            "low": [99.0, 101.0, 103.0],
+            "close": [102.0, 104.0, 107.0],
+            "adj_close": [102.0, 104.0, 107.0],
+            "volume": [1000, 1000, 1000],
+        }
+    )
+
+    out = realized_vol(df, method="parkinson", window=2, trading_days=252)
+
+    daily = daily_variance(df, method="parkinson")
+    expected = np.sqrt(daily.iloc[0:2].mean() * 252.0)
+
+    assert np.isnan(out.iloc[0])
+    assert np.isclose(out.iloc[1], expected)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias, get_args
 import numpy as np
 import pandas as pd
 
-Estimator = Literal["cc", "parkinson", "gk", "rs", "yz"]
+Estimator : TypeAlias = Literal["cc", "parkinson", "gk", "rs", "yz"]
+
+VALID_ESTIMATORS = get_args(Estimator)
 
 _REQUIRED_COLUMNS = {"date", "open", "high", "low", "close", "adj_close"}
 
@@ -78,25 +80,29 @@ def _adjust_ohlc(df: pd.DataFrame) -> pd.DataFrame:
 
 def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
     """
-    Compute a per-day variance proxy.
-
-        r_t = log(C_t / C_{t-1})
-        variance_t = r_t²
-
-    Returns daily variance, not annualized volatility.
+    Compute a per-day variance proxy based on different estimators.
+    Returns daily variance, not annualized volatility
     """
-    if method != "cc":
-        raise NotImplementedError(f"Estimator {method!r} is not implemented yet.")
+
+    if method not in VALID_ESTIMATORS:
+        raise ValueError(f'Invalid estimator: {method}. Must be one of {VALID_ESTIMATORS}.')
 
     adjusted = _adjust_ohlc(df)
 
+    high = adjusted['high'].astype(float)
+    low = adjusted['low'].astype(float)
     close = adjusted["close"].astype(float)
+    
+    if method == 'cc':
+        log_return = np.log(close / close.shift(1))
+        variance = log_return**2
 
-    log_return = np.log(close / close.shift(1))
-    variance = log_return**2
+    elif method == 'parkinson':
+        log_range = np.log(high / low)
+        variance = log_range ** 2 / (4.0 * np.log(2.0))
 
     variance.index = pd.DatetimeIndex(adjusted["date"])
-    variance.name = "cc"
+    variance.name = method
 
     return variance
 
@@ -113,13 +119,16 @@ def realized_vol(
     Example:
         0.20 means 20% annualized volatility.
     '''
+    if method not in VALID_ESTIMATORS:
+        raise ValueError(f'Invalid estimator: {method}. Must be one of {VALID_ESTIMATORS}.')
+
     if window < 2:
         raise ValueError('Window must include at least 2.')
     
     if trading_days <= 0:
         raise ValueError('Trading days must be positive.')
 
-    variance = daily_variance(df, method = 'cc')
+    variance = daily_variance(df, method = method)
 
     rolling_variance = variance.rolling(
         window = window,
