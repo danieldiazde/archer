@@ -99,3 +99,37 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
     variance.name = "cc"
 
     return variance
+
+def realized_vol(
+    df: pd.DataFrame,
+    *,
+    method: Estimator = 'cc',
+    window : int = 21,
+    trading_days : int = 252
+) -> pd.Series:
+    '''
+    Compute annualized realized volatility in decimal units.
+
+    Example:
+        0.20 means 20% annualized volatility.
+    '''
+    if window < 2:
+        raise ValueError('Window must include at least 2.')
+    
+    if trading_days <= 0:
+        raise ValueError('Trading days must be positive.')
+
+    variance = daily_variance(df, method = 'cc')
+
+    rolling_variance = variance.rolling(
+        window = window,
+        min_periods = window,
+    ).mean()
+
+    annualized_variance = rolling_variance * float(trading_days)
+
+    vol = np.sqrt(annualized_variance)
+    vol.name = f'rv_{method}_{window}'
+
+
+    return vol
