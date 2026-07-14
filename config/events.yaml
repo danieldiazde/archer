@@ -1,3 +1,4 @@
 events:
   - {date: "2018-02-05", symbols: ["^VIX", "SVXY", "VXX"], reason: "Volmageddon; XIV termination"}
+  - {date: "2018-02-06", symbols: ["SVXY"], reason: "Volmageddon follow-through / return-date alignment"}
   - {date: "2020-03-16", symbols: ["^GSPC", "^VIX"], reason: "COVID crash"}

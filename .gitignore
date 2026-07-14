@@ -15,4 +15,10 @@ wheels/
 # uv caches
 .uv_cache/
 
-.data/
+#files
+data/bronze/*
+data/silver/*
+
+!data/.gitkeep
+!data/bronze/.gitkeep
+!data/silver/.gitkeep

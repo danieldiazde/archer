@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from archer.features.realized_vol import _adjust_ohlc, daily_variance, realized_vol
+from archer.features.realized_vol import _adjust_ohlc, daily_variance, realized_vol, VALID_ESTIMATORS
 import pytest
 
 def test_adjusted_bars_removes_split_jump() -> None:
@@ -361,3 +361,92 @@ def test_simulate_intraday_gbm_ohlc_produces_valid_bars() -> None:
     assert (df["low"] <= df[["open", "close"]].min(axis=1)).all()
 
     assert np.allclose(df["adj_close"], df["close"])
+
+def test_estimators_recover_known_volatility_under_driftless_gbm() -> None:
+    true_sigma = 0.20
+
+    df = simulate_intraday_gbm_ohlc(
+        n_days=3_000,
+        steps_per_day=390,
+        sigma=true_sigma,
+        seed=42,
+        annual_log_drift=0.0,
+    )
+
+    estimates = {
+        method: realized_vol(df, method=method, window=21).dropna()
+        for method in VALID_ESTIMATORS
+    }
+
+    means = {
+        method: series.mean()
+        for method, series in estimates.items()
+    }
+
+    stds = {
+        method: series.std()
+        for method, series in estimates.items()
+    }
+
+    for method, estimate in means.items():
+        assert abs(estimate - true_sigma) < 0.03, (method, estimate)
+
+    assert stds["gk"] < stds["parkinson"] < stds["cc"]
+    assert stds["rs"] < stds["parkinson"] < stds["cc"]
+    assert stds["yz"] < stds["parkinson"] < stds["cc"]
+
+def test_drift_stress_rs_and_yz_are_more_stable_than_cc() -> None:
+
+    true_sigma = 0.20
+    drift_assert_threshold = 0.015
+
+    flat = simulate_intraday_gbm_ohlc(
+        n_days=3_000,
+        steps_per_day=390,
+        sigma=true_sigma,
+        seed=42,
+        annual_log_drift=0.0,
+    )
+
+    trending = simulate_intraday_gbm_ohlc(
+        n_days=3_000,
+        steps_per_day=390,
+        sigma=true_sigma,
+        seed=42,
+        annual_log_drift=2.0,
+    )
+
+    flat_means = {
+        method: realized_vol(flat, method=method, window=21).dropna().mean()
+        for method in VALID_ESTIMATORS
+    }
+
+    trending_means = {
+        method: realized_vol(trending, method=method, window=21).dropna().mean()
+        for method in VALID_ESTIMATORS
+    }
+
+    drift_impact = {
+        method: trending_means[method] - flat_means[method]
+        for method in VALID_ESTIMATORS
+    }
+
+    debug_msg = (
+        f"flat_means: {flat_means}\n"
+        f"trending_means: {trending_means}\n"
+        f"drift_impact: {drift_impact}"
+    )
+
+    assert drift_impact["cc"] > drift_impact["rs"], debug_msg
+    assert drift_impact["cc"] > drift_impact["yz"], debug_msg
+
+    assert abs(drift_impact["rs"]) < drift_assert_threshold, (
+        f"Drift impact for RS is not less than {drift_assert_threshold}.\n"
+        f"{debug_msg}"
+    )
+
+    assert abs(drift_impact["yz"]) < drift_assert_threshold, (
+        f"Drift impact for YZ is not less than {drift_assert_threshold}.\n"
+        f"{debug_msg}"
+    )
+
