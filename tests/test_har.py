@@ -8,7 +8,23 @@ from archer.models.dataset import VolDataset
 from archer.models.har import HARForecaster
 
 
+def make_y_end(
+    idx: pd.DatetimeIndex,
+    horizon: int,
+) -> pd.Series:
+    """
+    Create synthetic target-window end dates aligned with a test dataset.
+    """
+    return pd.Series(
+        idx + pd.offsets.BDay(horizon),
+        index=idx,
+        name="y_end",
+    )
+
+
 def make_linear_har_dataset(n: int = 100) -> VolDataset:
+    horizon = 21
+
     rng = np.random.default_rng(42)
     idx = pd.bdate_range("2020-01-01", periods=n)
 
@@ -29,13 +45,18 @@ def make_linear_har_dataset(n: int = 100) -> VolDataset:
     )
     y.name = "future_mean_variance_21"
 
-    returns = pd.Series(0.0, index=idx, name="returns")
+    returns = pd.Series(
+        0.0,
+        index=idx,
+        name="returns",
+    )
 
     return VolDataset(
         X=X,
         y=y,
+        y_end=make_y_end(idx, horizon),
         returns=returns,
-        horizon=21,
+        horizon=horizon,
     )
 
 
@@ -51,7 +72,8 @@ def test_har_forecaster_fits_and_predicts_aligned_variance_series() -> None:
     assert pred.name == "har"
     assert (pred > 0).all()
 
-    # Because the dataset is exactly linear, predictions should be essentially exact.
+    # The target is exactly linear in the three HAR features, so OLS should
+    # reproduce it up to floating-point precision.
     assert np.allclose(pred.to_numpy(), ds.y.to_numpy())
 
 
@@ -75,6 +97,7 @@ def test_har_forecaster_rejects_predict_before_fit() -> None:
 
 
 def test_har_forecaster_floors_negative_predictions() -> None:
+    horizon = 21
     idx = pd.bdate_range("2020-01-01", periods=30)
 
     X = pd.DataFrame(
@@ -86,8 +109,8 @@ def test_har_forecaster_floors_negative_predictions() -> None:
         index=idx,
     )
 
-    # This is intentionally artificial. It forces an OLS line that can predict
-    # negative variance for high feature values.
+    # Intentionally artificial: this creates a fitted line that produces
+    # negative raw predictions, allowing us to test the positive floor.
     y = pd.Series(
         0.01 - 0.02 * X["har_d"],
         index=idx,
@@ -97,8 +120,13 @@ def test_har_forecaster_floors_negative_predictions() -> None:
     ds = VolDataset(
         X=X,
         y=y,
-        returns=pd.Series(0.0, index=idx, name="returns"),
-        horizon=21,
+        y_end=make_y_end(idx, horizon),
+        returns=pd.Series(
+            0.0,
+            index=idx,
+            name="returns",
+        ),
+        horizon=horizon,
     )
 
     model = HARForecaster(epsilon=1e-8)
