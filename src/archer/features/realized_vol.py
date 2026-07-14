@@ -205,4 +205,3 @@ def realized_vol(
     vol.name = f"rv_{method}_{window}"
 
     return vol
-

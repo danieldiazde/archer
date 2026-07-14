@@ -265,9 +265,9 @@ def test_realized_vol_yang_zhang_combines_overnight_open_close_and_rs() -> None:
     # First valid YZ window is rows 1, 2, 3.
     # Row 0 has no previous close, so overnight is NaN there.
     expected_variance = (
-        overnight.iloc[1:4].var(ddof=1)
-        + k * open_close.iloc[1:4].var(ddof=1)
-        + (1.0 - k) * rs.iloc[1:4].mean()
+        overnight[1:4].var(ddof=1)
+        + k * open_close[1:4].var(ddof=1)
+        + (1.0 - k) * rs[1:4].mean()
     )
 
     expected_vol = np.sqrt(expected_variance * 252.0)
@@ -276,3 +276,88 @@ def test_realized_vol_yang_zhang_combines_overnight_open_close_and_rs() -> None:
     assert np.isnan(out.iloc[1])
     assert np.isnan(out.iloc[2])
     assert np.isclose(out.iloc[3], expected_vol)
+
+def simulate_intraday_gbm_ohlc(
+    *,
+    n_days: int,
+    steps_per_day: int,
+    sigma: float,
+    seed: int,
+    annual_log_drift: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Simulate OHLC bars from an intraday log-price process.
+    """
+    rng = np.random.default_rng(seed)
+
+    dt = 1.0 / (252.0 * steps_per_day)
+    log_price = np.log(100.0)
+
+    rows: list[dict[str, object]] = []
+    dates = pd.bdate_range("2010-01-04", periods=n_days)
+
+    for current_date in dates:
+        open_log = log_price
+
+        shocks = rng.normal(
+            loc=annual_log_drift * dt,
+            scale=sigma * np.sqrt(dt),
+            size=steps_per_day,
+        )
+
+        intraday_log_path = open_log + np.cumsum(shocks)
+
+        full_log_path = np.r_[open_log, intraday_log_path]
+        full_price_path = np.exp(full_log_path)
+
+        open_price = full_price_path[0]
+        high_price = full_price_path.max()
+        low_price = full_price_path.min()
+        close_price = full_price_path[-1]
+
+        rows.append(
+            {
+                "date": current_date,
+                "open": open_price,
+                "high": high_price,
+                "low": low_price,
+                "close": close_price,
+                "adj_close": close_price,
+                "volume": 1,
+            }
+        )
+
+        log_price = full_log_path[-1]
+
+    return pd.DataFrame(rows)
+
+def test_simulate_intraday_gbm_ohlc_produces_valid_bars() -> None:
+    df = simulate_intraday_gbm_ohlc(
+        n_days=5,
+        steps_per_day=10,
+        sigma=0.20,
+        seed=42,
+    )
+
+    assert len(df) == 5
+
+    assert list(df.columns) == [
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "adj_close",
+        "volume",
+    ]
+
+    assert df["date"].is_monotonic_increasing
+
+    price_cols = ["open", "high", "low", "close", "adj_close"]
+
+    assert (df[price_cols] > 0).all().all()
+
+    assert (df["high"] >= df[["open", "close"]].max(axis=1)).all()
+    assert (df["low"] <= df[["open", "close"]].min(axis=1)).all()
+
+    assert np.allclose(df["adj_close"], df["close"])
