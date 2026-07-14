@@ -5,29 +5,43 @@ from typing import Protocol
 import pandas as pd
 
 from .dataset import VolDataset
+from .fold import ForecastFold
 
 
 class Forecaster(Protocol):
     """
     Common interface for volatility forecasting models.
 
-    All forecasts must be daily variance predictions, indexed like ds.X.
-    The evaluation harness can annualize or transform them later.
+    Models receive the complete dataset plus an explicit forecasting fold.
+
+    This allows different models to use the information available at the
+    cutoff correctly:
+
+        HAR:
+            Fits on supervised rows whose target windows end by the cutoff.
+
+        GARCH:
+            Fits on returns observed through the cutoff.
     """
 
     name: str
 
-    def fit(self, ds: VolDataset) -> None:
+    def fit(
+        self,
+        ds: VolDataset,
+        fold: ForecastFold,
+    ) -> None:
         """
-        Fit the model on a volatility dataset.
+        Fit the model using only information available at the fold cutoff.
         """
         ...
 
-    def predict(self, ds: VolDataset) -> pd.Series:
+    def predict(
+        self,
+        ds: VolDataset,
+        fold: ForecastFold,
+    ) -> pd.Series:
         """
-        Predict daily variance for each row in ds.
-
-        Returns:
-            pd.Series indexed by ds.X.index.
+        Produce daily-variance forecasts for the fold's test origins.
         """
         ...

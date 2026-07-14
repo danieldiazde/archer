@@ -7,86 +7,170 @@ import pandas as pd
 import statsmodels.api as sm
 
 from .dataset import VolDataset
+from .fold import ForecastFold
 
 
 @dataclass
 class HARForecaster:
     """
-    HAR-RV forecaster.
+    HAR-RV volatility forecaster.
 
     Fits:
-        y_t = beta_0 + beta_d har_d(t) + beta_w har_w(t) + beta_m har_m(t) + error
 
-    Forecasts are daily variance units, not annualized volatility.
+        y_t = beta_0
+              + beta_d * har_d(t)
+              + beta_w * har_w(t)
+              + beta_m * har_m(t)
+              + error_t
+
+    Forecasts are expressed in daily variance units.
+
+    The model receives the complete dataset and a ForecastFold:
+
+        fit:
+            Uses only supervised rows whose target windows end by the
+            fold cutoff.
+
+        predict:
+            Produces forecasts for feature dates strictly after the
+            fold cutoff.
     """
 
     name: str = "har"
-    epsilon: float = 1e-12 #minimum prediction allowed
+    epsilon: float = 1e-12
     hac_lags: int = 21
-    feature_names: tuple[str, str, str] = ("har_d", "har_w", "har_m")
-    result_: Any | None = field(default=None, init=False, repr=False)
+    feature_names: tuple[str, str, str] = (
+        "har_d",
+        "har_w",
+        "har_m",
+    )
 
-    def fit(self, ds: VolDataset) -> None:
+    result_: Any | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def fit(
+        self,
+        ds: VolDataset,
+        fold: ForecastFold,
+    ) -> None:
         """
-        Fit OLS HAR model with HAC/Newey-West covariance.
+        Fit OLS using the fold's leakage-safe supervised training rows.
 
-        HAC affects standard errors and t-stats, not point forecasts.
+        HAC/Newey-West covariance changes standard errors and inference,
+        not coefficient estimates or point forecasts.
         """
-        self._validate_dataset(ds)
+        train_ds = fold.train_dataset(ds)
 
-        X = ds.X.loc[:, list(self.feature_names)].astype(float)
-        y = ds.y.astype(float)
+        self._validate_training_dataset(train_ds)
 
-        X_const = sm.add_constant(X, has_constant="add")
+        X = train_ds.X.loc[:, list(self.feature_names)].astype(float)
+        y = train_ds.y.astype(float)
 
-        model = sm.OLS(y, X_const, missing="raise")
+        X_with_constant = sm.add_constant(
+            X,
+            has_constant="add",
+        )
+
+        model = sm.OLS(
+            y,
+            X_with_constant,
+            missing="raise",
+        )
+
+        maxlags = min(
+            self.hac_lags,
+            len(train_ds.X) - 1,
+        )
 
         self.result_ = model.fit(
             cov_type="HAC",
-            cov_kwds={"maxlags": self.hac_lags},
+            cov_kwds={"maxlags": maxlags},
         )
 
-    def predict(self, ds: VolDataset) -> pd.Series:
+    def predict(
+        self,
+        ds: VolDataset,
+        fold: ForecastFold,
+    ) -> pd.Series:
         """
-        Predict daily variance for every row in ds.
+        Predict future average daily variance for the fold's test origins.
         """
         if self.result_ is None:
             raise RuntimeError("HARForecaster is not fitted.")
 
-        self._validate_features(ds)
+        test_ds = fold.test_dataset(ds)
 
-        X = ds.X.loc[:, list(self.feature_names)].astype(float)
-        X_const = sm.add_constant(X, has_constant="add")
+        self._validate_prediction_features(test_ds.X)
 
-        raw_pred = self.result_.predict(X_const)
+        X = test_ds.X.loc[:, list(self.feature_names)].astype(float)
 
-        pred = pd.Series(
-            raw_pred,
-            index=ds.X.index,
-            name=self.name,
+        X_with_constant = sm.add_constant(
+            X,
+            has_constant="add",
         )
 
-        return pred.clip(lower=self.epsilon)
+        raw_prediction = self.result_.predict(X_with_constant)
 
-    def _validate_dataset(self, ds: VolDataset) -> None:
-        self._validate_features(ds)
+        prediction = pd.Series(
+            raw_prediction,
+            index=test_ds.X.index,
+            name=self.name,
+            dtype=float,
+        )
 
+        return prediction.clip(lower=self.epsilon)
+
+    def _validate_training_dataset(
+        self,
+        ds: VolDataset,
+    ) -> None:
         if ds.X.empty:
-            raise ValueError("Cannot fit HARForecaster on an empty dataset.")
+            raise ValueError("HAR training dataset is empty.")
 
         if not ds.X.index.equals(ds.y.index):
-            raise ValueError("X and y indexes must be aligned.")
+            raise ValueError("HAR training X and y indexes are not aligned.")
+
+        self._validate_prediction_features(ds.X)
 
         if ds.y.isna().any():
-            raise ValueError("Target y contains missing values.")
+            raise ValueError("HAR training target contains missing values.")
 
-    def _validate_features(self, ds: VolDataset) -> None:
-        missing = set(self.feature_names) - set(ds.X.columns)
+        if not pd.api.types.is_numeric_dtype(ds.y):
+            raise ValueError("HAR training target must be numeric.")
+
+    def _validate_prediction_features(
+        self,
+        X: pd.DataFrame,
+    ) -> None:
+        if X.empty:
+            raise ValueError("HAR prediction dataset is empty.")
+
+        missing = [
+            feature
+            for feature in self.feature_names
+            if feature not in X.columns
+        ]
 
         if missing:
-            raise ValueError(f"Missing HAR feature columns: {sorted(missing)}")
+            raise ValueError(
+                f"HAR dataset is missing required features: {missing}"
+            )
 
-        X = ds.X.loc[:, list(self.feature_names)]
+        features = X.loc[:, list(self.feature_names)]
 
-        if X.isna().any().any():
+        if features.isna().any().any():
             raise ValueError("HAR features contain missing values.")
+
+        non_numeric = [
+            column
+            for column in features.columns
+            if not pd.api.types.is_numeric_dtype(features[column])
+        ]
+
+        if non_numeric:
+            raise ValueError(
+                f"HAR features must be numeric: {non_numeric}"
+            )

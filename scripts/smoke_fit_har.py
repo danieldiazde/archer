@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from archer.data.ingest import load_ingest_config
@@ -8,6 +7,7 @@ from archer.data.returns import make_log_returns, make_price_matrix
 from archer.data.store import ParquetStore
 from archer.features.realized_vol import daily_variance
 from archer.models.dataset import build_vol_dataset
+from archer.models.fold import make_forecast_fold
 from archer.models.har import HARForecaster
 
 
@@ -23,6 +23,9 @@ def main() -> None:
         silver_dir=cfg.silver_dir,
     )
 
+    # ------------------------------------------------------------
+    # 1. Load the complete clean SPX history
+    # ------------------------------------------------------------
     spx = store.read_silver("^GSPC").copy()
 
     spx["date"] = (
@@ -36,12 +39,18 @@ def main() -> None:
         .reset_index(drop=True)
     )
 
+    # ------------------------------------------------------------
+    # 2. Estimate daily total realized variance
+    # ------------------------------------------------------------
     variance = daily_variance(
         spx,
         method="gk_total",
     )
     variance.name = "gk_total"
 
+    # ------------------------------------------------------------
+    # 3. Calculate adjusted close-to-close log returns
+    # ------------------------------------------------------------
     prices = make_price_matrix(
         spx,
         field="adj_close",
@@ -50,6 +59,9 @@ def main() -> None:
     returns = make_log_returns(prices)["^GSPC"]
     returns.name = "returns"
 
+    # ------------------------------------------------------------
+    # 4. Build the complete dataset once
+    # ------------------------------------------------------------
     full_ds = build_vol_dataset(
         variance=variance,
         returns=returns,
@@ -58,37 +70,56 @@ def main() -> None:
         monthly_window=22,
     )
 
-    train_ds, test_ds = full_ds.split(TRAIN_END)
+    # ------------------------------------------------------------
+    # 5. Construct a leakage-safe forecasting fold
+    # ------------------------------------------------------------
+    fold = make_forecast_fold(
+        full_ds,
+        cutoff=TRAIN_END,
+    )
+
+    train_ds = fold.train_dataset(full_ds)
+    test_ds = fold.test_dataset(full_ds)
 
     if train_ds.X.empty:
         raise RuntimeError("Purged HAR training dataset is empty.")
 
+    if test_ds.X.empty:
+        raise RuntimeError("HAR test dataset is empty.")
+
     if train_ds.y_end.max() > TRAIN_END:
         raise RuntimeError("Training target window crosses the cutoff.")
 
+    if test_ds.X.index.min() <= TRAIN_END:
+        raise RuntimeError("Test feature date is not after the cutoff.")
+
+    # ------------------------------------------------------------
+    # 6. Fit HAR using the fold's purged training rows
+    # ------------------------------------------------------------
     model = HARForecaster(
         epsilon=1e-12,
         hac_lags=21,
     )
 
-    model.fit(train_ds)
+    model.fit(full_ds, fold)
 
     if model.result_ is None:
         raise RuntimeError("HAR fit did not produce a result.")
 
-    train_pred = model.predict(train_ds)
+    # The fold-aware predict method returns only test forecasts.
+    test_pred = model.predict(full_ds, fold)
 
+    # ------------------------------------------------------------
+    # 7. Inspect coefficients and HAC inference
+    # ------------------------------------------------------------
     params = model.result_.params
-    standard_errors = model.result_.bse
-    t_values = model.result_.tvalues
-    p_values = model.result_.pvalues
 
     coefficient_table = pd.DataFrame(
         {
             "coefficient": params,
-            "hac_std_error": standard_errors,
-            "t_value": t_values,
-            "p_value": p_values,
+            "hac_std_error": model.result_.bse,
+            "t_value": model.result_.tvalues,
+            "p_value": model.result_.pvalues,
         }
     )
 
@@ -98,21 +129,25 @@ def main() -> None:
         + params["har_m"]
     )
 
-    # Convert daily variance predictions to annualized volatility
+    # Model output remains in daily variance units.
+    # Annualization is only for human-readable inspection.
     predicted_annualized_vol = (
-        train_pred * TRADING_DAYS
+        test_pred * TRADING_DAYS
     ).pow(0.5)
     predicted_annualized_vol.name = "predicted_annualized_vol"
 
     actual_annualized_vol = (
-        train_ds.y * TRADING_DAYS
+        test_ds.y * TRADING_DAYS
     ).pow(0.5)
     actual_annualized_vol.name = "actual_annualized_vol"
 
+    # ------------------------------------------------------------
+    # 8. Print smoke-fit evidence
+    # ------------------------------------------------------------
     print("FULL DATASET")
     print(f"Rows: {len(full_ds.X):,}")
     print(
-        f"Feature range: "
+        "Feature range: "
         f"{full_ds.X.index.min().date()} "
         f"to {full_ds.X.index.max().date()}"
     )
@@ -120,19 +155,19 @@ def main() -> None:
     print("\nPURGED TRAINING DATASET")
     print(f"Rows: {len(train_ds.X):,}")
     print(
-        f"Feature range: "
+        "Feature range: "
         f"{train_ds.X.index.min().date()} "
         f"to {train_ds.X.index.max().date()}"
     )
     print(
-        f"Latest target end: "
+        "Latest target end: "
         f"{train_ds.y_end.max().date()}"
     )
 
     print("\nFUTURE TEST DATASET")
     print(f"Rows: {len(test_ds.X):,}")
     print(
-        f"Feature range: "
+        "Feature range: "
         f"{test_ds.X.index.min().date()} "
         f"to {test_ds.X.index.max().date()}"
     )
@@ -144,15 +179,18 @@ def main() -> None:
     print(coefficient_table)
 
     print("\nHAR PERSISTENCE")
-    print(f"beta_d + beta_w + beta_m = {persistence:.6f}")
+    print(
+        "beta_d + beta_w + beta_m = "
+        f"{persistence:.6f}"
+    )
 
-    print("\nTRAINING PREDICTIONS: DAILY VARIANCE")
-    print(train_pred.describe())
+    print("\nOUT-OF-SAMPLE PREDICTIONS: DAILY VARIANCE")
+    print(test_pred.describe())
 
-    print("\nTRAINING PREDICTIONS: ANNUALIZED VOLATILITY")
+    print("\nOUT-OF-SAMPLE PREDICTIONS: ANNUALIZED VOLATILITY")
     print(predicted_annualized_vol.describe())
 
-    print("\nACTUAL TARGET: ANNUALIZED VOLATILITY")
+    print("\nOUT-OF-SAMPLE ACTUAL TARGET: ANNUALIZED VOLATILITY")
     print(actual_annualized_vol.describe())
 
     print("\nMODEL SUMMARY")
