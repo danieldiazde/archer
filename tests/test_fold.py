@@ -5,7 +5,11 @@ import pandas as pd
 import pytest
 
 from archer.models.dataset import build_vol_dataset
-from archer.models.fold import make_forecast_fold
+from archer.models.fold import (
+    make_expanding_folds,
+    make_forecast_fold,
+    )
+
 
 
 def make_dataset(
@@ -143,4 +147,139 @@ def test_make_forecast_fold_rejects_test_end_at_or_before_cutoff() -> None:
             ds,
             cutoff=cutoff,
             test_end=cutoff,
+        )
+
+def test_make_expanding_folds_covers_oos_dates_without_gaps() -> None:
+    dates, ds = make_dataset(
+        n=170,
+        horizon=10,
+    )
+
+    first_cutoff = dates[90]
+
+    folds = make_expanding_folds(
+        ds,
+        first_cutoff=first_cutoff,
+        refit_every=21,
+    )
+
+    expected_test_idx = ds.X.index[
+        ds.X.index > first_cutoff
+    ]
+
+    actual_test_idx = pd.DatetimeIndex(
+        [
+            date
+            for fold in folds
+            for date in fold.test_idx
+        ]
+    )
+
+    assert actual_test_idx.equals(expected_test_idx)
+    assert actual_test_idx.is_unique
+
+
+def test_make_expanding_folds_refits_every_21_origins() -> None:
+    dates, ds = make_dataset(
+        n=170,
+        horizon=10,
+    )
+
+    folds = make_expanding_folds(
+        ds,
+        first_cutoff=dates[90],
+        refit_every=21,
+    )
+
+    assert len(folds) > 1
+
+    # Every complete fold contains exactly 21 forecast origins.
+    for fold in folds[:-1]:
+        assert len(fold.test_idx) == 21
+
+    # The final fold may be shorter.
+    assert 1 <= len(folds[-1].test_idx) <= 21
+
+
+def test_expanding_fold_cutoffs_chain_without_overlap() -> None:
+    dates, ds = make_dataset(
+        n=170,
+        horizon=10,
+    )
+
+    first_cutoff = dates[90]
+
+    folds = make_expanding_folds(
+        ds,
+        first_cutoff=first_cutoff,
+        refit_every=21,
+    )
+
+    assert folds[0].cutoff == first_cutoff
+
+    for expected_id, fold in enumerate(folds):
+        train_ds = fold.train_dataset(ds)
+        test_ds = fold.test_dataset(ds)
+
+        assert fold.fold_id == expected_id
+        assert fold.test_end == test_ds.X.index.max()
+
+        # Supervised labels are fully observed by the fit cutoff.
+        assert (train_ds.y_end <= fold.cutoff).all()
+
+        # Forecast origins occur strictly after the fit cutoff.
+        assert (test_ds.X.index > fold.cutoff).all()
+
+    for previous, current in zip(folds, folds[1:]):
+        # The next parameter refit occurs after the previous prediction block.
+        assert current.cutoff == previous.test_end
+
+        # Forecast blocks do not overlap.
+        assert current.test_idx.min() > previous.test_idx.max()
+
+
+def test_make_expanding_folds_respects_final_test_end() -> None:
+    dates, ds = make_dataset(
+        n=170,
+        horizon=10,
+    )
+
+    first_cutoff = dates[90]
+    final_test_end = dates[135]
+
+    folds = make_expanding_folds(
+        ds,
+        first_cutoff=first_cutoff,
+        refit_every=21,
+        final_test_end=final_test_end,
+    )
+
+    actual_test_idx = pd.DatetimeIndex(
+        [
+            date
+            for fold in folds
+            for date in fold.test_idx
+        ]
+    )
+
+    expected_test_idx = ds.X.index[
+        (ds.X.index > first_cutoff)
+        & (ds.X.index <= final_test_end)
+    ]
+
+    assert actual_test_idx.equals(expected_test_idx)
+    assert folds[-1].test_end <= final_test_end
+
+
+def test_make_expanding_folds_rejects_invalid_refit_frequency() -> None:
+    _, ds = make_dataset()
+
+    with pytest.raises(
+        ValueError,
+        match="refit_every must be at least 1",
+    ):
+        make_expanding_folds(
+            ds,
+            first_cutoff="2020-04-01",
+            refit_every=0,
         )
