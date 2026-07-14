@@ -450,3 +450,54 @@ def test_drift_stress_rs_and_yz_are_more_stable_than_cc() -> None:
         f"{debug_msg}"
     )
 
+def test_daily_variance_gk_total_adds_overnight_gap_to_intraday_gk() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03"]),
+            "open": [100.0, 103.0],
+            "high": [102.0, 106.0],
+            "low": [99.0, 101.0],
+            "close": [100.0, 104.0],
+            "adj_close": [100.0, 104.0],
+            "volume": [1000, 1000],
+        }
+    )
+
+    out = daily_variance(df, method="gk_total")
+
+    overnight_1 = np.log(103.0 / 100.0)
+
+    log_hl_1 = np.log(106.0 / 101.0)
+    log_co_1 = np.log(104.0 / 103.0)
+
+    intraday_gk_1 = (
+        0.5 * log_hl_1**2
+        - (2.0 * np.log(2.0) - 1.0) * log_co_1**2
+    )
+
+    expected_1 = overnight_1**2 + intraday_gk_1
+
+    assert np.isnan(out.iloc[0])
+    assert np.isclose(out.iloc[1], expected_1)
+
+def test_realized_vol_gk_total_averages_variance_then_sqrt() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]),
+            "open": [100.0, 103.0, 104.0],
+            "high": [102.0, 106.0, 108.0],
+            "low": [99.0, 101.0, 103.0],
+            "close": [100.0, 104.0, 107.0],
+            "adj_close": [100.0, 104.0, 107.0],
+            "volume": [1000, 1000, 1000],
+        }
+    )
+
+    out = realized_vol(df, method="gk_total", window=2, trading_days=252)
+
+    daily = daily_variance(df, method="gk_total")
+    expected = np.sqrt(daily.iloc[1:3].mean() * 252.0)
+
+    assert np.isnan(out.iloc[0])
+    assert np.isnan(out.iloc[1])
+    assert np.isclose(out.iloc[2], expected)

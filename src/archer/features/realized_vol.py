@@ -4,9 +4,14 @@ from typing import Literal, TypeAlias, get_args
 import numpy as np
 import pandas as pd
 
-Estimator : TypeAlias = Literal["cc", "parkinson", "gk", "rs", "yz"]
+Estimator : TypeAlias = Literal["cc", "parkinson", "gk", "rs", "gk_total", "yz"]
 
 VALID_ESTIMATORS = get_args(Estimator)
+
+DAILY_ESTIMATORS = tuple(
+    estimator for estimator in VALID_ESTIMATORS
+    if estimator != "yz"
+)
 
 _REQUIRED_COLUMNS = {"date", "open", "high", "low", "close", "adj_close"}
 
@@ -86,7 +91,7 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
     if method == "yz":
         raise ValueError("Yang-Zhang is window-level only. Use realized_vol(..., method='yz').")
 
-    if method not in {"cc", "parkinson", "gk", "rs"}:
+    if method not in DAILY_ESTIMATORS:
         raise NotImplementedError(f"Estimator {method!r} is not implemented yet.")
 
     adjusted = _adjust_ohlc(df)
@@ -109,11 +114,24 @@ def daily_variance(df: pd.DataFrame, method: Estimator) -> pd.Series:
         log_co = np.log(close / open_)
         variance = 0.5 * log_hl ** 2 - (2.0 * np.log(2.0) - 1.0) * log_co ** 2
     
-    else:
+    elif method == "rs":
         variance = (
             np.log(high / close) * np.log(high / open_)
             + np.log(low / close) * np.log(low / open_)
         )
+
+    else:
+        overnight = np.log(open_ / close.shift(1))
+
+        log_hl = np.log(high / low)
+        log_co = np.log(close / open_)
+
+        intraday_gk = (
+            0.5 * log_hl**2
+            - (2.0 * np.log(2.0) - 1.0) * log_co**2
+        )
+
+        variance = overnight ** 2 + intraday_gk
 
 
     variance.index = pd.DatetimeIndex(adjusted["date"])
@@ -189,7 +207,7 @@ def realized_vol(
     if method == "yz":
         variance = _yang_zhang_variance(df, window=window)
 
-    elif method in {"cc", "parkinson", "gk", "rs"}:
+    elif method in DAILY_ESTIMATORS:
         daily_var = daily_variance(df, method=method)
         variance = daily_var.rolling(
             window=window,
