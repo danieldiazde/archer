@@ -9,22 +9,12 @@ from .fold import ForecastFold
 
 
 class Forecaster(Protocol):
-    """
-    Common interface for volatility forecasting models.
-
-    Models receive the complete dataset plus an explicit forecasting fold.
-
-    This allows different models to use the information available at the
-    cutoff correctly:
-
-        HAR:
-            Fits on supervised rows whose target windows end by the cutoff.
-
-        GARCH:
-            Fits on returns observed through the cutoff.
-    """
-
-    name: str
+    @property
+    def name(self) -> str:
+        """
+        Model name used as the forecast column name.
+        """
+        ...
 
     def fit(
         self,
