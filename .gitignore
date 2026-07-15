@@ -18,7 +18,9 @@ wheels/
 #files
 data/bronze/*
 data/silver/*
+data/evals/*
 
 !data/.gitkeep
+!data/evals/.gitkeep
 !data/bronze/.gitkeep
 !data/silver/.gitkeep
