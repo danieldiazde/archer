@@ -17,6 +17,7 @@ from archer.models.benchmarks import NaiveMA22Forecaster
 from archer.models.dataset import build_vol_dataset
 from archer.models.fold import make_expanding_folds
 from archer.models.har import HARForecaster
+from archer.models.garch import GarchForecaster
 
 
 SYMBOL = "^GSPC"
@@ -30,8 +31,8 @@ FIRST_CUTOFF = pd.Timestamp("2013-12-31")
 REFIT_EVERY = 21
 
 OUTPUT_DIR = Path("data/evals")
-PANEL_PATH = OUTPUT_DIR / "forecast_panel_naive_har.parquet"
-MANIFEST_PATH = OUTPUT_DIR / "forecast_panel_naive_har.manifest.json"
+PANEL_PATH = OUTPUT_DIR / "forecast_panel.parquet"
+MANIFEST_PATH = OUTPUT_DIR / "forecast_panel.manifest.json"
 
 
 def main() -> None:
@@ -89,6 +90,7 @@ def main() -> None:
         model_factories=[
             NaiveMA22Forecaster,
             HARForecaster,
+            GarchForecaster,
         ],
     )
 
