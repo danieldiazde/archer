@@ -22,6 +22,13 @@ from archer.models.fold import make_expanding_folds
 from archer.models.garch import GarchForecaster
 from archer.models.har import HARForecaster
 
+import matplotlib.pyplot as plt
+
+from archer.analytics.plots import (
+    plot_forecasts_vs_realized,
+    plot_vix_variance_spread,
+)
+
 
 SPX_SYMBOL = "^GSPC"
 VIX_SYMBOL = "^VIX"
@@ -49,6 +56,9 @@ MSE_BY_YEAR_PATH = OUTPUT_DIR / "mse_by_year.csv"
 MZ_PATH = OUTPUT_DIR / "mz_calibration.csv"
 DM_QLIKE_PATH = OUTPUT_DIR / "dm_qlike.csv"
 DM_MSE_PATH = OUTPUT_DIR / "dm_mse.csv"
+
+FORECAST_PLOT_PATH = OUTPUT_DIR / "forecasts_vs_realized.png"
+VIX_SPREAD_PLOT_PATH = OUTPUT_DIR / "vix_variance_spread.png"
 
 
 def main() -> None:
@@ -182,6 +192,15 @@ def main() -> None:
         baseline=BASELINE,
     )
 
+    forecast_figure = plot_forecasts_vs_realized(
+        panel,
+    )
+
+    vix_spread_figure = plot_vix_variance_spread(
+        panel,
+        rolling_window=HORIZON,
+    )
+
     # ------------------------------------------------------------
     # 8. Persist the panel and report tables
     # ------------------------------------------------------------
@@ -189,6 +208,21 @@ def main() -> None:
         parents=True,
         exist_ok=True,
     )
+
+    forecast_figure.savefig(
+        FORECAST_PLOT_PATH,
+        dpi=200,
+        bbox_inches="tight",
+    )
+
+    vix_spread_figure.savefig(
+        VIX_SPREAD_PLOT_PATH,
+        dpi=200,
+        bbox_inches="tight",
+    )
+
+    plt.close(forecast_figure)
+    plt.close(vix_spread_figure)
 
     panel.frame.to_parquet(PANEL_PATH)
 
@@ -233,6 +267,8 @@ def main() -> None:
             "mz_calibration": str(MZ_PATH),
             "dm_qlike": str(DM_QLIKE_PATH),
             "dm_mse": str(DM_MSE_PATH),
+            "forecast_plot": str(FORECAST_PLOT_PATH),
+            "vix_spread_plot": str(VIX_SPREAD_PLOT_PATH),
         },
     }
 
@@ -303,6 +339,9 @@ def main() -> None:
     print(f"MZ calibration: {MZ_PATH}")
     print(f"DM QLIKE: {DM_QLIKE_PATH}")
     print(f"DM MSE: {DM_MSE_PATH}")
+
+    print(f"Forecast plot: {FORECAST_PLOT_PATH}")
+    print(f"VIX spread plot: {VIX_SPREAD_PLOT_PATH}")
 
 
 def print_header(title: str) -> None:
