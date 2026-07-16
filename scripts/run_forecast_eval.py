@@ -4,8 +4,13 @@ import json
 from functools import partial
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 
+from archer.analytics.plots import (
+    plot_forecasts_vs_realized,
+    plot_vix_variance_spread,
+)
 from archer.analytics.report import build_forecast_report
 from archer.analytics.walkforward import run_walkforward
 from archer.data.ingest import load_ingest_config
@@ -21,13 +26,6 @@ from archer.models.dataset import build_vol_dataset
 from archer.models.fold import make_expanding_folds
 from archer.models.garch import GarchForecaster
 from archer.models.har import HARForecaster
-
-import matplotlib.pyplot as plt
-
-from archer.analytics.plots import (
-    plot_forecasts_vs_realized,
-    plot_vix_variance_spread,
-)
 
 
 SPX_SYMBOL = "^GSPC"
@@ -154,7 +152,7 @@ def main() -> None:
             f"First missing dates: {missing_vix[:10].tolist()}"
         )
 
-    # partial creates a no-argument factory compatible with run_walkforward.
+    # partial produces a no-argument model factory.
     vix_factory = partial(
         AlignedSeriesForecaster,
         name="vix_implied",
@@ -162,7 +160,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # 5. Generate the expanding-window schedule
+    # 5. Generate the expanding-window fold schedule
     # ------------------------------------------------------------
     folds = make_expanding_folds(
         ds,
@@ -171,7 +169,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # 6. Run the forecasting tournament
+    # 6. Run the walk-forward forecasting tournament
     # ------------------------------------------------------------
     panel = run_walkforward(
         ds=ds,
@@ -185,13 +183,16 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # 7. Build every evaluation table from the same panel
+    # 7. Build all evaluation tables
     # ------------------------------------------------------------
     report = build_forecast_report(
         panel,
         baseline=BASELINE,
     )
 
+    # ------------------------------------------------------------
+    # 8. Build the final figures
+    # ------------------------------------------------------------
     forecast_figure = plot_forecasts_vs_realized(
         panel,
     )
@@ -202,12 +203,24 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # 8. Persist the panel and report tables
+    # 9. Persist outputs
     # ------------------------------------------------------------
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
+
+    panel.frame.to_parquet(PANEL_PATH)
+
+    report.overall_qlike.to_csv(OVERALL_QLIKE_PATH)
+    report.overall_mse.to_csv(OVERALL_MSE_PATH)
+
+    report.qlike_by_year.to_csv(QLIKE_BY_YEAR_PATH)
+    report.mse_by_year.to_csv(MSE_BY_YEAR_PATH)
+
+    report.mz.to_csv(MZ_PATH)
+    report.dm_qlike.to_csv(DM_QLIKE_PATH)
+    report.dm_mse.to_csv(DM_MSE_PATH)
 
     forecast_figure.savefig(
         FORECAST_PLOT_PATH,
@@ -223,18 +236,6 @@ def main() -> None:
 
     plt.close(forecast_figure)
     plt.close(vix_spread_figure)
-
-    panel.frame.to_parquet(PANEL_PATH)
-
-    report.overall_qlike.to_csv(OVERALL_QLIKE_PATH)
-    report.overall_mse.to_csv(OVERALL_MSE_PATH)
-
-    report.qlike_by_year.to_csv(QLIKE_BY_YEAR_PATH)
-    report.mse_by_year.to_csv(MSE_BY_YEAR_PATH)
-
-    report.mz.to_csv(MZ_PATH)
-    report.dm_qlike.to_csv(DM_QLIKE_PATH)
-    report.dm_mse.to_csv(DM_MSE_PATH)
 
     manifest = {
         "spx_symbol": SPX_SYMBOL,
@@ -281,7 +282,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # 9. Print the research report
+    # 10. Print the report
     # ------------------------------------------------------------
     print_header("DATASET")
     print(f"Symbol: {SPX_SYMBOL}")
@@ -339,7 +340,6 @@ def main() -> None:
     print(f"MZ calibration: {MZ_PATH}")
     print(f"DM QLIKE: {DM_QLIKE_PATH}")
     print(f"DM MSE: {DM_MSE_PATH}")
-
     print(f"Forecast plot: {FORECAST_PLOT_PATH}")
     print(f"VIX spread plot: {VIX_SPREAD_PLOT_PATH}")
 
