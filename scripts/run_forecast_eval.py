@@ -13,14 +13,23 @@ from archer.data.ingest import load_ingest_config
 from archer.data.returns import make_log_returns, make_price_matrix
 from archer.data.store import ParquetStore
 from archer.features.realized_vol import daily_variance
-from archer.models.benchmarks import NaiveMA22Forecaster
 from archer.models.dataset import build_vol_dataset
 from archer.models.fold import make_expanding_folds
 from archer.models.har import HARForecaster
 from archer.models.garch import GarchForecaster
 
+from functools import partial
 
-SYMBOL = "^GSPC"
+from archer.features.implied_vol import vix_to_daily_variance
+from archer.models.benchmarks import (
+    AlignedSeriesForecaster,
+    NaiveMA22Forecaster,
+)
+
+
+SPX_SYMBOL = "^GSPC"
+VIX_SYMBOL = "^VIX"
+
 VARIANCE_METHOD = "gk_total"
 
 HORIZON = 21
@@ -43,7 +52,7 @@ def main() -> None:
         silver_dir=cfg.silver_dir,
     )
 
-    spx = store.read_silver(SYMBOL).copy()
+    spx = store.read_silver(SPX_SYMBOL).copy()
 
     spx["date"] = (
         pd.to_datetime(spx["date"], utc=True)
@@ -67,7 +76,7 @@ def main() -> None:
         field="adj_close",
     )
 
-    returns = make_log_returns(prices)[SYMBOL]
+    returns = make_log_returns(prices)[SPX_SYMBOL]
     returns.name = "returns"
 
     ds = build_vol_dataset(
@@ -78,10 +87,55 @@ def main() -> None:
         monthly_window=MONTHLY_WINDOW,
     )
 
+    vix = store.read_silver(VIX_SYMBOL).copy()
+
+    vix["date"] = (
+        pd.to_datetime(vix["date"], utc=True)
+        .dt.tz_convert(None)
+        .dt.normalize()
+    )
+
+    vix = (
+        vix.sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    vix_levels = make_price_matrix(
+        vix,
+        field="close",
+    )[VIX_SYMBOL]
+    vix_levels.name = "vix"
+
+    vix_implied = vix_to_daily_variance(
+        vix_levels,
+        calendar_horizon_days=30,
+        trading_horizon_days=HORIZON,
+        annual_calendar_days=365,
+    )
+
+    # Require a VIX observation for every forecastable SPX row.
+    vix_implied = vix_implied.reindex(ds.X.index)
+
+    missing_vix = vix_implied.index[
+        vix_implied.isna()
+    ]
+
+    if not missing_vix.empty:
+        raise RuntimeError(
+            "VIX-implied forecast is missing required SPX dates. "
+            f"First missing dates: {missing_vix[:10].tolist()}"
+        )
+
     folds = make_expanding_folds(
         ds,
         first_cutoff=FIRST_CUTOFF,
         refit_every=REFIT_EVERY,
+    )
+
+    vix_factory = partial(
+        AlignedSeriesForecaster,
+        name="vix_implied",
+        series=vix_implied,
     )
 
     panel = run_walkforward(
@@ -91,6 +145,7 @@ def main() -> None:
             NaiveMA22Forecaster,
             HARForecaster,
             GarchForecaster,
+            vix_factory,
         ],
     )
 
@@ -132,8 +187,14 @@ def main() -> None:
     panel.frame.to_parquet(PANEL_PATH)
 
     manifest = {
-        "symbol": SYMBOL,
+        "symbol": SPX_SYMBOL,
+        "vix_symbol": VIX_SYMBOL,
         "variance_method": VARIANCE_METHOD,
+        "vix_conversion": {
+            "calendar_horizon_days": 30,
+            "trading_horizon_days": HORIZON,
+            "annual_calendar_days": 365,
+        },
         "horizon": HORIZON,
         "weekly_window": WEEKLY_WINDOW,
         "monthly_window": MONTHLY_WINDOW,
@@ -158,7 +219,8 @@ def main() -> None:
     )
 
     print_header("DATASET")
-    print(f"Symbol: {SYMBOL}")
+    print(f"Symbol: {SPX_SYMBOL}")
+    print(f"VIX benchmark: {VIX_SYMBOL}")
     print(f"Variance method: {VARIANCE_METHOD}")
     print(f"Full dataset rows: {len(ds.X):,}")
     print(
