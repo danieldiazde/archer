@@ -9,6 +9,8 @@ import numbers
 
 from archer.analytics.losses import loss_frame
 from archer.analytics.walkforward import run_walkforward
+from archer.analytics.dm import pairwise_dm_table
+from archer.analytics.mz import mz_table
 from archer.data.ingest import load_ingest_config
 from archer.data.returns import make_log_returns, make_price_matrix
 from archer.data.store import ParquetStore
@@ -42,6 +44,12 @@ REFIT_EVERY = 21
 OUTPUT_DIR = Path("data/evals")
 PANEL_PATH = OUTPUT_DIR / "forecast_panel.parquet"
 MANIFEST_PATH = OUTPUT_DIR / "forecast_panel.manifest.json"
+
+MZ_PATH = OUTPUT_DIR / "mz_calibration.csv"
+DM_QLIKE_PATH = OUTPUT_DIR / "dm_qlike.csv"
+DM_MSE_PATH = OUTPUT_DIR / "dm_mse.csv"
+QLIKE_BY_YEAR_PATH = OUTPUT_DIR / "qlike_by_year.csv"
+MSE_BY_YEAR_PATH = OUTPUT_DIR / "mse_by_year.csv"
 
 
 def main() -> None:
@@ -159,6 +167,18 @@ def main() -> None:
         loss="mse",
     )
 
+    mz_summary = mz_table(panel)
+
+    dm_qlike = pairwise_dm_table(
+        qlike,
+        horizon=panel.horizon,
+    )
+
+    dm_mse = pairwise_dm_table(
+        mse,
+        horizon=panel.horizon,
+    )
+
     qlike_summary = summarize_losses(
         qlike,
         baseline="naive_ma22",
@@ -185,6 +205,11 @@ def main() -> None:
     )
 
     panel.frame.to_parquet(PANEL_PATH)
+    mz_summary.to_csv(MZ_PATH)
+    dm_qlike.to_csv(DM_QLIKE_PATH)
+    dm_mse.to_csv(DM_MSE_PATH)
+    qlike_by_year.to_csv(QLIKE_BY_YEAR_PATH)
+    mse_by_year.to_csv(MSE_BY_YEAR_PATH)
 
     manifest = {
         "symbol": SPX_SYMBOL,
@@ -208,6 +233,14 @@ def main() -> None:
         "dataset_end": str(ds.X.index.max().date()),
         "oos_start": str(panel.frame.index.min().date()),
         "oos_end": str(panel.frame.index.max().date()),
+        "artifacts": {
+        "panel": str(PANEL_PATH),
+        "mz_calibration": str(MZ_PATH),
+        "dm_qlike": str(DM_QLIKE_PATH),
+        "dm_mse": str(DM_MSE_PATH),
+        "qlike_by_year": str(QLIKE_BY_YEAR_PATH),
+        "mse_by_year": str(MSE_BY_YEAR_PATH),
+    },
     }
 
     MANIFEST_PATH.write_text(
@@ -255,9 +288,24 @@ def main() -> None:
     print_header("MSE BY YEAR, LOWER IS BETTER")
     print(mse_by_year)
 
+    print_header("MINCER-ZARNOWITZ CALIBRATION")
+    print(mz_summary)
+
+    print_header("DIEBOLD-MARIANO: QLIKE")
+    print(dm_qlike)
+
+    print_header("DIEBOLD-MARIANO: MSE")
+    print(dm_mse)
+
     print_header("PERSISTED OUTPUT")
     print(f"Panel: {PANEL_PATH}")
     print(f"Manifest: {MANIFEST_PATH}")
+
+    print(f"MZ calibration: {MZ_PATH}")
+    print(f"DM QLIKE: {DM_QLIKE_PATH}")
+    print(f"DM MSE: {DM_MSE_PATH}")
+    print(f"QLIKE by year: {QLIKE_BY_YEAR_PATH}")
+    print(f"MSE by year: {MSE_BY_YEAR_PATH}")
 
 
 def summarize_losses(
