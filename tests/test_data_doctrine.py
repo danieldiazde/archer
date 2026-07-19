@@ -4,11 +4,10 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
-from archer.data.gates import GateResult, OutliersVsWhiteListGate, Gate
+from archer.data.gates import OutliersVsWhiteListGate, Gate
 from archer.data.ingest import IngestConfig, ingest_symbol
-from archer.data.sources import FetchResult, SourceResolver
+from archer.data.sources import SourceResolver
 from archer.data.store import ParquetStore
 from archer.data.universe import Instrument
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
-import pandas as pd
 from matplotlib.figure import Figure
 
 from .panel import PredictionPanel

@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from archer.analytics.panel import (
-    PredictionPanel,
     make_prediction_panel,
 )
 from archer.models.dataset import build_vol_dataset

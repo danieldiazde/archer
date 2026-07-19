@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from pandas import DatetimeIndex
 
 from archer.models.dataset import build_vol_dataset
 

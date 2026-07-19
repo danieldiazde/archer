@@ -4,6 +4,12 @@ import json
 from functools import partial
 from pathlib import Path
 
+import hashlib
+import platform
+import subprocess
+from datetime import datetime, timezone
+from importlib.metadata import version
+
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -57,6 +63,46 @@ DM_MSE_PATH = OUTPUT_DIR / "dm_mse.csv"
 
 FORECAST_PLOT_PATH = OUTPUT_DIR / "forecasts_vs_realized.png"
 VIX_SPREAD_PLOT_PATH = OUTPUT_DIR / "vix_variance_spread.png"
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+
+    with path.open("rb") as file:
+        for chunk in iter(
+            lambda: file.read(1024 * 1024),
+            b"",
+        ):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def git_metadata() -> dict[str, str | bool | None]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        return {
+            "commit": commit,
+            "dirty": bool(status),
+        }
+
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {
+            "commit": None,
+            "dirty": None,
+        }
 
 
 def main() -> None:
@@ -238,6 +284,12 @@ def main() -> None:
     plt.close(vix_spread_figure)
 
     manifest = {
+        "generated_at_utc": datetime.now(
+            timezone.utc,
+        ).isoformat(),
+        "python_version": platform.python_version(),
+        "archer_version": version("archer"),
+        "git": git_metadata(),
         "spx_symbol": SPX_SYMBOL,
         "vix_symbol": VIX_SYMBOL,
         "variance_method": VARIANCE_METHOD,
@@ -258,6 +310,35 @@ def main() -> None:
             "calendar_horizon_days": 30,
             "trading_horizon_days": HORIZON,
             "annual_calendar_days": 365,
+        },
+        "input_sha256": {
+            "config/data.yaml": file_sha256(
+                Path("config/data.yaml"),
+            ),
+            "config/events.yaml": file_sha256(
+                Path("config/events.yaml"),
+            ),
+            "config/universe.yaml": file_sha256(
+                Path("config/universe.yaml"),
+            ),
+            "data/silver/GSPC.manifest.json": file_sha256(
+                Path("data/silver/GSPC.manifest.json"),
+            ),
+            "data/silver/VIX.manifest.json": file_sha256(
+                Path("data/silver/VIX.manifest.json"),
+            ),
+        },
+        "output_sha256": {
+            "forecast_panel": file_sha256(PANEL_PATH),
+            "overall_qlike": file_sha256(OVERALL_QLIKE_PATH),
+            "overall_mse": file_sha256(OVERALL_MSE_PATH),
+            "qlike_by_year": file_sha256(QLIKE_BY_YEAR_PATH),
+            "mse_by_year": file_sha256(MSE_BY_YEAR_PATH),
+            "mz_calibration": file_sha256(MZ_PATH),
+            "dm_qlike": file_sha256(DM_QLIKE_PATH),
+            "dm_mse": file_sha256(DM_MSE_PATH),
+            "forecast_plot": file_sha256(FORECAST_PLOT_PATH),
+            "vix_spread_plot": file_sha256(VIX_SPREAD_PLOT_PATH),
         },
         "artifacts": {
             "panel": str(PANEL_PATH),

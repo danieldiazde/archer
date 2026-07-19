@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from archer.analytics.walkforward import run_walkforward
-from archer.models.base import Forecaster
 from archer.models.benchmarks import NaiveMA22Forecaster
 from archer.models.dataset import VolDataset
 from archer.models.fold import ForecastFold, make_expanding_folds
