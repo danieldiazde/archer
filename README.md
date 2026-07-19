@@ -1,5 +1,7 @@
 # Archer
 
+[![CI](https://github.com/danieldiazde/archer/actions/workflows/ci.yml/badge.svg)](https://github.com/danieldiazde/archer/actions/workflows/ci.yml)
+
 Archer is a leakage-safe volatility forecasting research system for the S&P 500. It builds auditable market-data snapshots, estimates realized variance, generates 21-day forecasts from four competing models, and evaluates them through a purged expanding-window walk-forward experiment.
 
 Across **3,129 out-of-sample forecasts from January 2014 through June 2026**, the HAR-RV model reduced mean QLIKE loss by **25.7%** relative to a trailing-month benchmark. The difference was statistically significant under a HAC-adjusted Diebold–Mariano test with `p = 0.0039`.
