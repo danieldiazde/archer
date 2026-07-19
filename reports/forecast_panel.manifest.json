@@ -1,0 +1,66 @@
+{
+  "generated_at_utc": "2026-07-19T17:46:27.315499+00:00",
+  "python_version": "3.12.13",
+  "archer_version": "0.2.0",
+  "git": {
+    "commit": "9c84986fc9466dcd5abd3d9c5458ee249a791b37",
+    "dirty": false
+  },
+  "spx_symbol": "^GSPC",
+  "vix_symbol": "^VIX",
+  "variance_method": "gk_total",
+  "horizon": 21,
+  "weekly_window": 5,
+  "monthly_window": 22,
+  "first_cutoff": "2013-12-31",
+  "refit_every": 21,
+  "baseline": "naive_ma22",
+  "n_folds": 149,
+  "n_forecasts": 3129,
+  "models": [
+    "naive_ma22",
+    "har",
+    "garch",
+    "vix_implied"
+  ],
+  "dataset_start": "2010-02-04",
+  "dataset_end": "2026-06-11",
+  "oos_start": "2014-01-02",
+  "oos_end": "2026-06-11",
+  "vix_conversion": {
+    "calendar_horizon_days": 30,
+    "trading_horizon_days": 21,
+    "annual_calendar_days": 365
+  },
+  "input_sha256": {
+    "config/data.yaml": "a738a1681f4e6c26d71b39c1c97580abae71fc38e2b33e667db5d611b3acbc13",
+    "config/events.yaml": "76d7207a20f86252662ba1b8720760c37e6f517e63595f7fe422de0f5faede8f",
+    "config/universe.yaml": "4eccaa0ff3e31ba0a90ef37629fdc5af2daa2d842f108a2edd26dd081b676e5b",
+    "data/silver/GSPC.manifest.json": "91aef3f7357189a4099281a8be5ddafe87ef55c3287e20210316cd90bd991f0f",
+    "data/silver/VIX.manifest.json": "a2e40ef30b1b05dc60280da7a68d7886c41bb1c2af59e256851e903afe35af39"
+  },
+  "output_sha256": {
+    "forecast_panel": "c6055d6201aa16d16dc348448a5a085ac1a1341ea75b55af0aa48c2e1a93439f",
+    "overall_qlike": "a70c0f3b20cf429056b960f2b4def8ee7c655caafa53a3b49459ff4cf870c038",
+    "overall_mse": "0bf9018308f0a92fea95fe7da26bd86ed6c6009edd3a3f25556c4731870e7bb9",
+    "qlike_by_year": "effb4fcfc29d3773a6f78ba47a5624d38367842fff18475e0f5116baca185eb4",
+    "mse_by_year": "0accf4f26a1fd43119549bcd286f5d21b6dd7a02cfd19dd7ab38c25a27811c3c",
+    "mz_calibration": "e26d11cffb53606231be63056a46dcc0302e72f60c29020247ed511c535db5a7",
+    "dm_qlike": "d2ddf03e9986c7e818d4ef5807a0e44c10e385c778a14c15d05c4c6c62a09169",
+    "dm_mse": "823f34d4160226bcaacfefb7a55e829d48a19cf2c83b9c28bd49e859dea3cfe9",
+    "forecast_plot": "caebb2a774b15fb8a3c9efda0c1767a9a4f347b80f64f5a61c28eb47d901bda7",
+    "vix_spread_plot": "201755e640bb12e59844417aa333a1bc7fb890616ce7c27047b0d505f30196f4"
+  },
+  "artifacts": {
+    "panel": "data/evals/forecast_panel.parquet",
+    "overall_qlike": "data/evals/overall_qlike.csv",
+    "overall_mse": "data/evals/overall_mse.csv",
+    "qlike_by_year": "data/evals/qlike_by_year.csv",
+    "mse_by_year": "data/evals/mse_by_year.csv",
+    "mz_calibration": "data/evals/mz_calibration.csv",
+    "dm_qlike": "data/evals/dm_qlike.csv",
+    "dm_mse": "data/evals/dm_mse.csv",
+    "forecast_plot": "data/evals/forecasts_vs_realized.png",
+    "vix_spread_plot": "data/evals/vix_variance_spread.png"
+  }
+}
